@@ -1,0 +1,70 @@
+#!/usr/bin/env bash
+# mas-sandbox - run another operating system in a throw-away virtual machine.
+# Nothing from your real computer is shared with it (no shared folders, no clipboard,
+# no USB). Everything done inside is erased when the window closes.
+#
+# Put an installer or disk image in ~/Sandbox (.iso, .qcow2 or .img), then open Sandbox.
+#   .iso          starts the installer/live system with a blank temporary disk
+#   .qcow2/.img   starts that disk, but changes are thrown away (the file is never modified)
+#
+# Optional settings:  MAS_SANDBOX_RAM=4096 (MB)  MAS_SANDBOX_CPUS=2  MAS_SANDBOX_NET=none
+set -u
+
+DIR="$HOME/Sandbox"
+mkdir -p "$DIR"
+
+say() {
+  if command -v kdialog >/dev/null 2>&1; then
+    kdialog --title "MAS Sandbox" --msgbox "$1"
+  else
+    printf '%b\n' "$1"
+  fi
+}
+
+shopt -s nullglob
+files=("$DIR"/*.iso "$DIR"/*.qcow2 "$DIR"/*.img)
+if [[ ${#files[@]} -eq 0 ]]; then
+  say "Put an installer or disk image (.iso, .qcow2 or .img) in this folder:\n\n$DIR\n\nThen open Sandbox again."
+  exit 0
+fi
+
+img="${files[0]}"
+if [[ ${#files[@]} -gt 1 ]] && command -v kdialog >/dev/null 2>&1; then
+  img="$(kdialog --title "MAS Sandbox" --getopenfilename "$DIR" "*.iso *.qcow2 *.img|Disk images")" || exit 0
+fi
+
+TMP="$(mktemp -d /var/tmp/mas-sandbox.XXXXXX)"
+trap 'rm -rf "$TMP"' EXIT
+export TMPDIR="$TMP"
+
+args=(-name "MAS Sandbox" -machine q35
+      -m "${MAS_SANDBOX_RAM:-4096}" -smp "${MAS_SANDBOX_CPUS:-2}"
+      -device virtio-vga -display gtk)
+
+if [[ -r /dev/kvm && -w /dev/kvm ]]; then
+  args+=(-enable-kvm -cpu host)
+else
+  say "Hardware virtualization is not available, so the sandbox will be slow.\n\nTurn on virtualization (VT-x / AMD-V) in your computer's firmware, or in your VM settings if MAS itself runs in a VM."
+  args+=(-cpu qemu64)
+fi
+
+if [[ "${MAS_SANDBOX_NET:-user}" == "none" ]]; then
+  args+=(-nic none)
+else
+  args+=(-nic user)
+fi
+
+case "$img" in
+  *.iso)
+    qemu-img create -f qcow2 "$TMP/disk.qcow2" 40G >/dev/null
+    args+=(-drive "file=$TMP/disk.qcow2,if=virtio" -cdrom "$img" -boot d)
+    ;;
+  *.qcow2)
+    args+=(-drive "file=$img,if=virtio,format=qcow2,snapshot=on")
+    ;;
+  *)
+    args+=(-drive "file=$img,if=virtio,format=raw,snapshot=on")
+    ;;
+esac
+
+qemu-system-x86_64 "${args[@]}"

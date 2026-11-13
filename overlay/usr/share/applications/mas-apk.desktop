@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Install Android app
+Comment=Install an .apk with Waydroid
+Exec=/usr/local/bin/mas-apk %f
+Icon=android
+Terminal=false
+NoDisplay=true
+MimeType=application/vnd.android.package-archive;

@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Install MAS
+Comment=Install MAS OS on this computer
+Exec=konsole -e sudo /usr/local/bin/mas-install
+Icon=/usr/share/mas/mas-icon.png
+Terminal=false

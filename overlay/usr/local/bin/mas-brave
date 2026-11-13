@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# mas-brave - opens Brave. The first time, it installs Brave from Flathub (needs internet).
+APP=com.brave.Browser
+
+if ! flatpak info "$APP" >/dev/null 2>&1; then
+  if [[ -z "${MAS_IN_TERM:-}" ]] && command -v konsole >/dev/null 2>&1; then
+    exec env MAS_IN_TERM=1 konsole -e "$0" "$@"
+  fi
+  echo "Installing Brave (first time only, needs internet)..."
+  flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+  if ! flatpak install --user -y flathub "$APP"; then
+    echo "Install failed."
+    read -r -p "Press Enter to close..." _
+    exit 1
+  fi
+  xdg-settings set default-web-browser com.brave.Browser.desktop >/dev/null 2>&1 || true
+fi
+
+exec flatpak run "$APP" "$@"

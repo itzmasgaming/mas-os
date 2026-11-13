@@ -1,0 +1,189 @@
+#!/usr/bin/env python3
+"""MAS Shield: shows a dot in the top-right corner while something is connected IN to this computer.
+
+How it decides: it looks at established TCP connections whose local port is one this computer is
+listening on, and ignores connections from this computer to itself. Connections that YOU start
+(opening a website, for example) are not counted.
+
+Usage:
+    mas-shield          run in the background (dot + notifications)
+    mas-shield --once   print current inbound connections and exit
+"""
+import os
+import subprocess
+import sys
+
+POLL_SECONDS = 3
+
+CSS = """
+window.mas-window { background: transparent; }
+.mas-dot {
+  background: #FFB020;
+  border-radius: 999px;
+  min-width: 14px;
+  min-height: 14px;
+  margin: 8px;
+  box-shadow: 0 0 0 4px rgba(255, 176, 32, 0.30);
+}
+"""
+
+
+def sh(cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return ""
+
+
+def split_addr(addr):
+    host, _, port = addr.rpartition(":")
+    return host.strip("[]").split("%")[0], port
+
+
+def is_loopback(host):
+    host = host.lower()
+    return host.startswith("127.") or host.startswith("::ffff:127.") or host in ("::1", "")
+
+
+def inbound_connections():
+    listening = set()
+    for line in sh(["ss", "-H", "-ltn"]).splitlines():
+        parts = line.split()
+        if len(parts) >= 4:
+            listening.add(split_addr(parts[3])[1])
+    found = set()
+    for line in sh(["ss", "-H", "-tn", "state", "established"]).splitlines():
+        parts = line.split()
+        if len(parts) < 4:
+            continue
+        local_host, local_port = split_addr(parts[2])
+        peer_host, peer_port = split_addr(parts[3])
+        if local_port not in listening:
+            continue
+        if is_loopback(peer_host) or peer_host == local_host:
+            continue
+        found.add((peer_host, peer_port, local_port))
+    return sorted(found)
+
+
+def describe(conns):
+    return "\n".join("%s  ->  port %s" % (peer, lport) for peer, _pport, lport in conns)
+
+
+def write_state(conns):
+    runtime = os.environ.get("XDG_RUNTIME_DIR")
+    if not runtime:
+        return
+    folder = os.path.join(runtime, "mas-shield")
+    try:
+        os.makedirs(folder, exist_ok=True)
+        with open(os.path.join(folder, "connections"), "w") as fh:
+            fh.write(describe(conns) + ("\n" if conns else ""))
+    except OSError:
+        pass
+
+
+def notify(conns):
+    try:
+        subprocess.Popen([
+            "notify-send", "-u", "critical", "-a", "MAS Shield",
+            "Someone connected to this computer", describe(conns),
+        ])
+    except Exception:
+        pass
+
+
+class Watcher:
+    def __init__(self):
+        self.known = set()
+
+    def poll(self):
+        conns = inbound_connections()
+        new = [c for c in conns if c not in self.known]
+        if new:
+            notify(new)
+        self.known = set(conns)
+        write_state(conns)
+        return conns
+
+
+def run_with_dot():
+    import gi
+    gi.require_version("Gtk", "4.0")
+    gi.require_version("Gtk4LayerShell", "1.0")
+    from gi.repository import Gdk, GLib, Gtk
+    from gi.repository import Gtk4LayerShell as LayerShell
+
+    if not LayerShell.is_supported():
+        raise RuntimeError("layer shell not supported by this compositor")
+
+    watcher = Watcher()
+
+    class DotApp(Gtk.Application):
+        def __init__(self):
+            super().__init__(application_id="org.mas.Shield")
+            self.win = None
+
+        def do_activate(self):
+            css = Gtk.CssProvider()
+            if hasattr(css, "load_from_string"):
+                css.load_from_string(CSS)
+            else:
+                css.load_from_data(CSS.encode())
+            Gtk.StyleContext.add_provider_for_display(
+                Gdk.Display.get_default(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+            self.win = Gtk.Window(application=self)
+            self.win.set_decorated(False)
+            self.win.set_default_size(30, 30)
+            self.win.add_css_class("mas-window")
+            dot = Gtk.Box()
+            dot.add_css_class("mas-dot")
+            self.win.set_child(dot)
+
+            LayerShell.init_for_window(self.win)
+            LayerShell.set_layer(self.win, LayerShell.Layer.OVERLAY)
+            LayerShell.set_anchor(self.win, LayerShell.Edge.TOP, True)
+            LayerShell.set_anchor(self.win, LayerShell.Edge.RIGHT, True)
+            LayerShell.set_margin(self.win, LayerShell.Edge.TOP, 6)
+            LayerShell.set_margin(self.win, LayerShell.Edge.RIGHT, 10)
+            LayerShell.set_namespace(self.win, "mas-shield")
+
+            self.hold()  # keep running while the dot is hidden
+            GLib.timeout_add_seconds(POLL_SECONDS, self.tick)
+            self.tick()
+
+        def tick(self):
+            conns = watcher.poll()
+            if conns:
+                self.win.set_tooltip_text(describe(conns))
+                self.win.set_visible(True)
+            else:
+                self.win.set_visible(False)
+            return True
+
+    DotApp().run([])
+
+
+def run_notifications_only():
+    import time
+    watcher = Watcher()
+    while True:
+        watcher.poll()
+        time.sleep(POLL_SECONDS)
+
+
+def main():
+    if "--once" in sys.argv:
+        conns = inbound_connections()
+        print(describe(conns) if conns else "No inbound connections.")
+        return
+    try:
+        run_with_dot()
+    except Exception as exc:  # no GTK / layer shell: still warn with notifications
+        print("MAS Shield: dot not available (%s); using notifications only." % exc, file=sys.stderr)
+        run_notifications_only()
+
+
+if __name__ == "__main__":
+    main()

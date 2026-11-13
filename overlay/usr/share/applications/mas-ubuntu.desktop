@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Ubuntu LTS
+Comment=Ubuntu command line in a small window
+Exec=/usr/local/bin/mas-ubuntu
+Icon=utilities-terminal
+Terminal=false
+Categories=System;TerminalEmulator;

@@ -1,0 +1,73 @@
+# MAS OS - packages added on top of the Arch Linux base.
+# One per line. The build stops if a package listed here does not exist.
+# Packages that may not exist go in optional.txt instead.
+
+# Desktop (minimal KDE Plasma, no extra apps)
+plasma-desktop
+plasma-nm
+plasma-pa
+kscreen
+systemsettings
+breeze
+breeze-gtk
+sddm
+xdg-desktop-portal-kde
+polkit-kde-agent
+kio-extras
+xorg-xwayland
+dolphin
+konsole
+ark
+kdialog
+networkmanager
+wpa_supplicant
+
+# Audio
+pipewire
+pipewire-pulse
+pipewire-alsa
+wireplumber
+
+# Graphics (open-source drivers; the 32-bit parts are needed by Wine and games)
+mesa
+vulkan-icd-loader
+vulkan-radeon
+vulkan-intel
+lib32-mesa
+lib32-vulkan-icd-loader
+lib32-vulkan-radeon
+lib32-vulkan-intel
+
+# Fonts
+noto-fonts
+
+# Windows apps (.exe, .msi)
+wine
+wine-mono
+wine-gecko
+winetricks
+
+# Archives (.zip, .rar)
+unzip
+zip
+unrar
+
+# Ubuntu LTS window, Sandbox VM, Brave (installed through Flatpak)
+distrobox
+podman
+qemu-desktop
+flatpak
+
+# Shield (firewall and the connection dot)
+nftables
+libnotify
+python-gobject
+gtk4
+
+# Restore points (Btrfs)
+btrfs-progs
+snapper
+
+# Small utilities
+xdg-utils
+git

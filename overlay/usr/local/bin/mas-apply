@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# mas-apply [ROOT]
+# Turns an Arch Linux install into MAS OS: installs the MAS packages, adds the branding,
+# launchers, firewall and shield, and turns on the services.
+#   mas-apply                      apply to the system you are running
+#   mas-apply /mnt/archinstall     apply to a freshly installed system (used by mas-install)
+set -uo pipefail
+
+if [[ $EUID -ne 0 ]]; then
+  exec sudo "$0" "$@"
+fi
+
+LAYER=/usr/share/mas-layer
+ROOT="${1:-/}"
+R="${ROOT%/}"          # "" when ROOT is /
+if [[ ! -d "$LAYER/overlay" ]]; then
+  echo "MAS layer files not found in $LAYER" >&2
+  exit 1
+fi
+if [[ -n "$R" && ! -d "$R/etc" ]]; then
+  echo "$ROOT does not look like an installed system." >&2
+  exit 1
+fi
+
+in_root() {
+  if [[ -z "$R" ]]; then "$@"; else arch-chroot "$R" "$@"; fi
+}
+
+echo "==> Keeping a copy of the MAS layer in the installed system"
+mkdir -p "$R/usr/share"
+if [[ -n "$R" ]]; then
+  rm -rf "$R/usr/share/mas-layer"
+  cp -a "$LAYER" "$R/usr/share/mas-layer"
+fi
+
+echo "==> Turning on the 32-bit (multilib) repository"
+PACCONF="$R/etc/pacman.conf"
+sed -i '/^#\[multilib\]/{s/^#//;n;s/^#//}' "$PACCONF"
+if ! grep -q '^\[multilib\]' "$PACCONF"; then
+  printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> "$PACCONF"
+fi
+in_root pacman -Sy --noconfirm
+
+echo "==> Installing MAS packages"
+mapfile -t REQ < <(grep -vE '^\s*(#|$)' "$LAYER/packages.txt")
+if ! in_root pacman -S --needed --noconfirm "${REQ[@]}"; then
+  echo "Package install failed. Check your internet connection and run: sudo mas-apply" >&2
+  exit 1
+fi
+while read -r pkg; do
+  in_root pacman -S --needed --noconfirm "$pkg" >/dev/null 2>&1 \
+    && echo "    + $pkg" || echo "    (skipped optional package: $pkg)"
+done < <(grep -vE '^\s*(#|$)' "$LAYER/optional.txt")
+
+echo "==> Adding MAS branding, launchers and the shield"
+cp -a "$LAYER/overlay/." "${R:-/}"
+chmod 755 "$R"/usr/local/bin/mas-* 2>/dev/null || true
+
+echo "==> Turning on services"
+in_root systemctl disable systemd-networkd.service iwd.service >/dev/null 2>&1 || true
+in_root systemctl enable sddm.service NetworkManager.service nftables.service
+in_root systemctl enable waydroid-container.service >/dev/null 2>&1 || true
+in_root systemctl enable snapper-timeline.timer snapper-cleanup.timer grub-btrfs.path >/dev/null 2>&1 || true
+
+echo
+echo "MAS OS is set up. Reboot to start it."

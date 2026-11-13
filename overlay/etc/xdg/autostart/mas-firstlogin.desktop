@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=MAS first login setup
+Exec=/usr/local/bin/mas-firstlogin
+NoDisplay=true
+OnlyShowIn=KDE;
+X-KDE-autostart-after=panel

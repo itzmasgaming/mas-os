@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Sandbox
+Comment=Disposable virtual machine. Erased when closed.
+Exec=/usr/local/bin/mas-sandbox
+Icon=computer
+Terminal=false
+Categories=System;Emulator;

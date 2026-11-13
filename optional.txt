@@ -1,0 +1,20 @@
+# Optional packages: used when they exist in the Arch repositories, skipped (with a message) when they do not.
+
+# Android apps (.apk)
+waydroid
+
+# More archive formats (.7z)
+7zip
+
+# Lets the connection dot sit on top of everything in the top-right corner
+gtk4-layer-shell
+
+# Restore points: a snapshot before every update, and boot into an old snapshot
+snap-pac
+grub-btrfs
+
+# Nice to have
+sddm-kcm
+kde-gtk-config
+fuse-overlayfs
+noto-fonts-emoji

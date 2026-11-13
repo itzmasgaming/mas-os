@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# mas-install - install MAS OS onto this computer's disk (run from the live ISO).
+if [[ $EUID -ne 0 ]]; then
+  exec sudo "$0" "$@"
+fi
+
+cat <<'EOF'
+=====================================================
+  MAS OS installer
+=====================================================
+This will start the Arch Linux installer (archinstall), then add MAS on top.
+
+IMPORTANT: the disk you choose will be ERASED. Back up your files first.
+
+Tips for the next screens:
+  - Disk configuration: pick your disk and use the default Btrfs layout.
+    If it asks about snapshots, choose Snapper (this gives you restore points).
+  - Network: choose NetworkManager.
+  - Profile: Desktop > KDE Plasma (MAS replaces its look afterwards).
+  - Create your user and password.
+  - At the end, when it offers to reboot or chroot, choose NOT to reboot yet.
+    MAS is added when the installer window closes.
+
+EOF
+read -r -p "Press Enter to start, or Ctrl+C to cancel..." _
+
+archinstall
+
+TARGET=/mnt/archinstall
+if mountpoint -q "$TARGET"; then
+  echo
+  echo "Adding MAS to the new system..."
+  mas-apply "$TARGET"
+  echo
+  echo "All done. You can reboot now (remove the USB stick or ISO first)."
+else
+  echo
+  echo "Could not find the new system at $TARGET."
+  echo "If the install finished, mount it and run:  sudo mas-apply /path/to/mounted/system"
+  echo "Or reboot into the new system and run:      sudo mas-apply"
+fi
+read -r -p "Press Enter to close..." _

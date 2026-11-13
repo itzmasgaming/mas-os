@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# mas-apk - install an Android app (.apk) with Waydroid. Sets Waydroid up the first time.
+APK="${1:-}"
+
+if [[ -z "${MAS_IN_TERM:-}" ]] && command -v konsole >/dev/null 2>&1; then
+  exec env MAS_IN_TERM=1 konsole -e "$0" "$@"
+fi
+
+pause() { read -r -p "Press Enter to close..." _; }
+
+if [[ -z "$APK" || ! -f "$APK" ]]; then
+  echo "Usage: mas-apk app.apk"
+  pause
+  exit 1
+fi
+if ! command -v waydroid >/dev/null 2>&1; then
+  echo "Waydroid is not installed in this build."
+  echo "Install it with:  sudo pacman -S waydroid"
+  pause
+  exit 1
+fi
+
+if [[ ! -f /var/lib/waydroid/waydroid.cfg ]]; then
+  echo "First-time Android setup (downloads about 1 GB, needs internet)..."
+  sudo waydroid init || { pause; exit 1; }
+fi
+sudo systemctl enable --now waydroid-container.service
+
+if ! waydroid status 2>/dev/null | grep -q 'Session:.*RUNNING'; then
+  waydroid session start >/dev/null 2>&1 &
+  for _ in $(seq 1 30); do
+    waydroid status 2>/dev/null | grep -q 'Session:.*RUNNING' && break
+    sleep 2
+  done
+fi
+
+if waydroid app install "$APK"; then
+  echo "Installed. Open it from the app menu."
+else
+  echo "Install failed."
+fi
+pause
