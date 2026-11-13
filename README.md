@@ -44,16 +44,39 @@ sudo bash build-mas.sh
 
 The ISO appears in `out/` (for example `out/mas-2026.11.13-x86_64.iso`). It needs about 15 GB of free disk space.
 
+### Option C - Ubuntu (or any Linux that is not Arch), using Docker
+
+Open a terminal inside this folder and type:
+
+```
+bash run-docker.sh
+```
+
+It installs Docker if needed, builds the ISO in a temporary Arch container, and leaves the ISO in `out/`.
+
 ## Step 2 - Try it in VirtualBox (your Windows files are not touched)
 
 1. VirtualBox > **New**. Type: Linux, Version: Arch Linux (64-bit).
 2. 4 GB RAM or more, 2 CPUs or more, a 40 GB virtual disk.
 3. Settings > System > tick **Enable EFI**.
-4. Settings > Display: Graphics Controller **VMSVGA**, Video Memory **128 MB**, tick **Enable 3D Acceleration**.
+4. Settings > Display: Graphics Controller **VMSVGA**, Video Memory **128 MB**, and leave **Enable 3D Acceleration OFF** (MAS draws with the CPU inside a virtual machine, which is the reliable way in VirtualBox).
 5. Settings > Storage: put the MAS ISO in the optical drive. Start the VM.
 6. Pick **MAS OS install medium**. After a minute you get the MAS desktop with your logo.
 
+Inside a virtual machine MAS switches to "safe drawing" on its own (`mas-gfx`), so the desktop is slower and has fewer visual effects than on a real computer. On a real computer it uses the graphics card as normal.
+
 Android apps (Waydroid) and heavy games need real hardware or a GPU. Expect them not to work inside VirtualBox.
+
+### Black screen with only a mouse cursor?
+
+1. Shut the VM down, then in Display settings make sure 3D Acceleration is **off** and Graphics Controller is **VMSVGA**.
+2. Start it again. At the boot menu press **e** (UEFI) or **Tab** (BIOS) and add one of these to the end of the line, then continue the boot:
+   - `mas.gfx=basic` (CPU drawing, most reliable)
+   - `mas.gfx=soft` (OpenGL on the CPU)
+   - `mas.gfx=normal` (use the virtual graphics card as is)
+3. Still black? Press **Right Ctrl + F3** to get a text console, log in as `mas` (no password) and run `mas-debug`. Send a screenshot of what it prints.
+
+On a text console you can also change the mode for good with `sudo mas-gfx basic` (or `soft`, `normal`, `auto`) followed by `sudo systemctl restart sddm`.
 
 ## Step 3 - Install it on a disk
 
@@ -62,6 +85,7 @@ On the live desktop, double-click **Install MAS** and follow the steps. It start
 
 ## Not done yet
 
+- Plasma 6.8 and newer have no X11 session, so MAS is Wayland only. Weak virtual graphics cards are handled by `mas-gfx`, not by an X11 fallback.
 - A performance kernel (Zen/XanMod). It uses the normal Arch kernel for now so that it boots reliably.
 - AppArmor.
 - NVIDIA drivers (open-source AMD and Intel graphics are included).

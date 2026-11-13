@@ -101,6 +101,8 @@ ln -sf /usr/lib/systemd/system/graphical.target       "$SYS/default.target"
 ln -sf /usr/lib/systemd/system/sddm.service           "$SYS/display-manager.service"
 ln -sf /usr/lib/systemd/system/NetworkManager.service "$SYS/multi-user.target.wants/NetworkManager.service"
 ln -sf /usr/lib/systemd/system/nftables.service       "$SYS/multi-user.target.wants/nftables.service"
+# picks safe drawing inside virtual machines (fixes the black screen) - the unit file comes from overlay/
+ln -sf /etc/systemd/system/mas-gfx.service            "$SYS/multi-user.target.wants/mas-gfx.service"
 if [[ $HAVE_WAYDROID -eq 1 ]]; then
   ln -sf /usr/lib/systemd/system/waydroid-container.service "$SYS/multi-user.target.wants/waydroid-container.service"
 fi

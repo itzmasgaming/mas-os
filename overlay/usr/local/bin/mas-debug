@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+# mas-debug - prints the few log lines that explain a black screen or a desktop that did not start.
+# Use it on a text console (Right-Ctrl + F3 in VirtualBox, log in as: mas, no password), then take a screenshot.
+# It also saves the longer version to ~/mas-debug.txt
+OUT="$HOME/mas-debug.txt"
+{
+  echo "== MAS debug =="
+  echo "date: $(date)"
+  echo "kernel: $(uname -r)"
+  echo "boot options: $(cat /proc/cmdline)"
+  echo "virtual machine: $(systemd-detect-virt --vm 2>/dev/null || true)"
+  /usr/local/bin/mas-gfx status 2>/dev/null
+  echo
+  echo "== sddm autologin =="
+  cat /etc/sddm.conf.d/autologin.conf 2>/dev/null
+  echo "sessions: $(ls /usr/share/wayland-sessions 2>/dev/null | tr '\n' ' ')"
+  echo
+  echo "== graphics devices =="
+  ls /dev/dri 2>/dev/null
+  lspci 2>/dev/null | grep -iE 'vga|3d|display' || true
+  echo
+  echo "== services =="
+  systemctl is-active sddm mas-gfx 2>/dev/null
+  echo
+  echo "== sddm log (last 25) =="
+  journalctl -b -u sddm --no-pager 2>/dev/null | tail -n 25
+  echo
+  echo "== desktop log, errors only (last 40) =="
+  journalctl -b --no-pager 2>/dev/null | grep -iE 'kwin|plasmashell|startplasma|drm|vmwgfx|egl|gbm' | grep -iE 'fail|error|crash|abort|cannot|unable|segfault|core dump' | tail -n 40
+} > "$OUT" 2>&1
+echo "Saved to $OUT. Short version:"
+echo
+head -n 22 "$OUT"
+echo
+echo "== the most useful lines =="
+tail -n 20 "$OUT"
