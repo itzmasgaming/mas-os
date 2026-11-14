@@ -1,0 +1,22 @@
+[Unit]
+Description=MAS: offer to reset a forgotten password (installed system only)
+ConditionPathExists=/var/lib/mas/recovery
+ConditionPathExists=!/etc/sddm.conf.d/autologin.conf
+Before=sddm.service display-manager.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=900
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+TTYVTDisallocate=yes
+ExecStart=/usr/local/bin/mas-boot-prompt
+
+[Install]
+WantedBy=multi-user.target

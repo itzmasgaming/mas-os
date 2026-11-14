@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# mas-setpass add|none - helper for the MAS first-run screen (mas-welcome). Runs as root through sudo.
+#   add    reads the new password from the first line of standard input, sets it for the user
+#          AND for root, makes a recovery key and prints ONLY the key on standard output
+#   none   removes the password of the user and of root
+# It only works ONCE: it needs the file /var/lib/mas/firstrun-pending, and deletes it when it succeeds.
+# It only ever changes the password of the user who ran sudo (and root).
+set -u
+PENDING="${MAS_PENDING:-/var/lib/mas/firstrun-pending}"
+STORE="${MAS_RECOVERY_STORE:-/var/lib/mas/recovery}"
+RECOVERY="${MAS_RECOVERY:-/usr/local/bin/mas-recovery}"
+
+if [[ $EUID -ne 0 ]]; then echo "mas-setpass: needs root" >&2; exit 1; fi
+who="${SUDO_USER:-}"
+if [[ -z "$who" || "$who" == root ]]; then echo "mas-setpass: run it with sudo from a normal user" >&2; exit 1; fi
+if [[ ! -e "$PENDING" ]]; then echo "mas-setpass: the first-run step is already done" >&2; exit 1; fi
+
+case "${1:-}" in
+  add)
+    IFS= read -r pass
+    if [[ -z "$pass" ]]; then echo "mas-setpass: empty password" >&2; exit 1; fi
+    if ! printf '%s:%s\nroot:%s\n' "$who" "$pass" "$pass" | chpasswd; then exit 1; fi
+    if ! key="$(MAS_RECOVERY_STORE="$STORE" "$RECOVERY" new --user "$who")" || [[ -z "$key" ]]; then
+      echo "mas-setpass: could not make a recovery key" >&2
+      exit 1
+    fi
+    rm -f "$PENDING"
+    printf '%s\n' "$key"
+    ;;
+  none)
+    passwd -d "$who" >/dev/null || exit 1
+    passwd -d root >/dev/null || exit 1
+    rm -f "$STORE"
+    rm -f "$PENDING"
+    ;;
+  *)
+    echo "usage: mas-setpass add|none" >&2
+    exit 1
+    ;;
+esac

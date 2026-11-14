@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# mas-xfce-setup - runs once per user at the first login in the XFCE desktop: MAS wallpaper.
+MARK="$HOME/.config/mas/xfce-setup-done"
+[[ -e "$MARK" ]] && exit 0
+mkdir -p "$(dirname "$MARK")"
+sleep 4
+IMG=/usr/share/mas/wallpaper-dark.jpg
+# xfdesktop keeps one setting per screen, monitor and workspace; set them all
+xfconf-query -c xfce4-desktop -l 2>/dev/null | grep -E '/(last-image|image-style)$' | while read -r prop; do
+  case "$prop" in
+    */last-image) xfconf-query -c xfce4-desktop -p "$prop" -s "$IMG" ;;
+    */image-style) xfconf-query -c xfce4-desktop -p "$prop" -s 5 ;;
+  esac
+done
+touch "$MARK"

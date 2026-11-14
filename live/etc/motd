@@ -1,3 +1,4 @@
 MAS OS live session. Double-click "Install MAS" on the desktop to install it.
 Desktop did not start or the screen is black?  Type:  mas-debug
-Change how the desktop is drawn:  sudo mas-gfx basic   (or soft, normal, auto)  then  sudo systemctl restart sddm
+Switch desktop: sudo mas-gfx xfce   (or basic, soft, normal, auto)  then  sudo systemctl restart sddm
+Forgot the password you set? Start menu > "Reset password (recovery key)", or:  sudo mas-recovery reset

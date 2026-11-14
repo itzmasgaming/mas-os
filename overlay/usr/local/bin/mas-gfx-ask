@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mas-gfx-ask - the live system asks, before the login screen starts, how the desktop should be drawn.
+# mas-gfx-ask - the live system asks, before the login screen starts, how the desktop should start.
 # Runs from mas-gfx-ask.service on the first text console. No key pressed = Automatic.
 # Skipped when the boot option  mas.gfx=...  is already given.
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -13,15 +13,16 @@ cat <<'EOF'
 
    MAS OS
    ------
-   How should the desktop be drawn?
+   How should the desktop start?
 
      1   Automatic       (recommended)
-     2   Safe            CPU drawing, no 3D. Use this if the screen goes black.
-     3   OpenGL on CPU   a bit faster than Safe, still no graphics card needed
-     4   Graphics card   for real computers
-     5   Troubleshoot    starts normally, then shows a report about what went wrong
+     2   Safe            Plasma drawn by the CPU. Try this if the screen goes black.
+     3   OpenGL on CPU   Plasma, a bit faster than Safe
+     4   Graphics card   Plasma for real computers
+     5   Simple desktop  XFCE. Works in every virtual machine. Use it if 1 and 2 stay black.
+     6   Troubleshoot    starts normally, then shows a report about what went wrong
 
-   Press 1-5. Nothing pressed in 12 seconds = 1.
+   Press 1-6. Nothing pressed in 12 seconds = 1.
 
 EOF
 
@@ -33,13 +34,14 @@ case "$key" in
   2) mode=basic ;;
   3) mode=soft ;;
   4) mode=normal ;;
-  5) mode=auto; touch "$RUN/mas-debug-auto" ;;
+  5) mode=xfce ;;
+  6) mode=auto; touch "$RUN/mas-debug-auto" ;;
 esac
 
 "$HERE/mas-gfx" "$mode" >/dev/null 2>&1 || true
 echo "   Starting with: $mode"
-if [[ "$key" == 5 && -z "${MAS_ROOT:-}" ]]; then
-  echo "   A report will appear on screen about a minute after the desktop starts."
+if [[ "$key" == 6 && -z "${MAS_ROOT:-}" ]]; then
+  echo "   A report appears on screen about a minute after the desktop starts."
   systemctl start --no-block mas-debug-auto.service >/dev/null 2>&1 || true
 fi
 sleep 1

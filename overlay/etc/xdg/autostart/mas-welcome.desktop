@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=MAS welcome
+Exec=/usr/local/bin/mas-welcome
+NoDisplay=true
+OnlyShowIn=KDE;XFCE;
+X-KDE-autostart-after=panel

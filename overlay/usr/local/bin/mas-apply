@@ -55,10 +55,16 @@ done < <(grep -vE '^\s*(#|$)' "$LAYER/optional.txt")
 echo "==> Adding MAS branding, launchers and the shield"
 cp -a "$LAYER/overlay/." "${R:-/}"
 chmod 755 "$R"/usr/local/bin/mas-* 2>/dev/null || true
+chmod 440 "$R"/etc/sudoers.d/mas-welcome 2>/dev/null || true
+# A freshly installed system asks "Add a password or not?" at the first login (mas-welcome)
+if [[ -n "$R" ]]; then
+  mkdir -p "$R/var/lib/mas"
+  : > "$R/var/lib/mas/firstrun-pending"
+fi
 
 echo "==> Turning on services"
 in_root systemctl disable systemd-networkd.service iwd.service >/dev/null 2>&1 || true
-in_root systemctl enable sddm.service NetworkManager.service nftables.service mas-gfx.service
+in_root systemctl enable sddm.service NetworkManager.service nftables.service mas-gfx.service mas-boot-prompt.service
 in_root systemctl enable waydroid-container.service >/dev/null 2>&1 || true
 in_root systemctl enable snapper-timeline.timer snapper-cleanup.timer grub-btrfs.path >/dev/null 2>&1 || true
 

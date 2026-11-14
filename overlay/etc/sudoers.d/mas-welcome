@@ -1,0 +1,2 @@
+# Lets the first-run screen set or remove the password once (mas-setpass refuses to run a second time).
+%wheel ALL=(root) NOPASSWD: /usr/local/bin/mas-setpass add, /usr/local/bin/mas-setpass none

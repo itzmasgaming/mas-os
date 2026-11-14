@@ -69,6 +69,9 @@ gtk4
 btrfs-progs
 snapper
 
+# Recovery key QR code
+qrencode
+
 # Small utilities
 xdg-utils
 git

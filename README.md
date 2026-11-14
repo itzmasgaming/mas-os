@@ -22,6 +22,9 @@ It builds MAS on top of Arch Linux with a KDE Plasma desktop that is restyled wi
 | Logo as default background | `MAS` wallpaper (dark and light versions), also on the login screen and the start button |
 | Sandbox VM that resets when closed | `Sandbox` launcher: a throw-away QEMU virtual machine. Put an `.iso`, `.qcow2` or `.img` in `~/Sandbox` first |
 | Restore points | Btrfs + Snapper. A snapshot is taken before every update (installed system only) |
+| First-time screen: add a password or not | `mas-welcome`: a window at the first login with **Add password / No password / Ask me later**. It also appears in the live session (every time you start the ISO) so you can see it. Live passwords are empty: just press Enter. The live session never locks itself |
+| The password is also the root password | When you press **Add password**, MAS sets that same password for your account and for `root`. **No password** clears both |
+| Recovery key (forgot password) | After you add a password, a window shows a **recovery key** and a **QR code** (scan it with your phone to save a copy). On an installed MAS, press **R** within 3 seconds at the "Forgot your password?" message that shows before the login screen, type the key, and choose a new password. The old key then stops working and you get a new one. In the live session use Start menu > **Reset password (recovery key)**. A camera can scan the QR code if the computer has one. Make a new key any time: `sudo mas-recovery new` |
 | Install it on a disk | `Install MAS` icon on the live desktop |
 
 ## Step 1 - Build the ISO
@@ -69,7 +72,16 @@ Android apps (Waydroid) and heavy games need real hardware or a GPU. Expect them
 
 ### Black screen with only a mouse cursor?
 
-After the first boot menu, MAS shows its own menu on a text screen: **How should the desktop be drawn?** Press **2** (Safe) if the screen goes black. Press **5** (Troubleshoot) to start normally and get a report about what went wrong on the second text console about a minute later (Right Ctrl + F2 brings it back). Nothing pressed for 12 seconds means 1 (Automatic).
+After the first boot menu, MAS shows its own menu on a text screen: **How should the desktop start?**
+
+- **1** Automatic (nothing pressed for 12 seconds also means 1)
+- **2** Safe: Plasma drawn by the CPU. Try this if the screen goes black.
+- **3** OpenGL on the CPU
+- **4** Graphics card (real computers)
+- **5** Simple desktop: **XFCE** instead of Plasma. It works in every virtual machine, so use it if 1 and 2 stay black. Same apps, same launchers, same wallpaper, plainer look.
+- **6** Troubleshoot: starts normally, stops the desktop after about a minute and prints a report about what went wrong on the second text console (Right Ctrl + F2 shows it again).
+
+Why: KDE Plasma 6.8 and newer is Wayland only, and VirtualBox's virtual graphics card is known to break it. XFCE runs on X11 and does not have that problem.
 
 To skip that menu or set the mode by hand:
 

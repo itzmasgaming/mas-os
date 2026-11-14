@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=MAS XFCE setup
+Exec=/usr/local/bin/mas-xfce-setup
+NoDisplay=true
+OnlyShowIn=XFCE;

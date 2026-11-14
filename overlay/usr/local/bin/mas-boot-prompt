@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# mas-boot-prompt - installed MAS only: for 3 seconds before the login screen, offers to reset a
+# forgotten password with the recovery key. Press R. Any other key (or nothing) continues the boot.
+clear 2>/dev/null || true
+printf '\n   MAS OS\n\n   Forgot your password?  Press R within 3 seconds to reset it with your recovery key.\n\n'
+key=""
+read -rsn1 -t 3 key || key=""
+case "$key" in
+  r|R) /usr/local/bin/mas-recovery reset; sleep 2 ;;
+esac
+exit 0

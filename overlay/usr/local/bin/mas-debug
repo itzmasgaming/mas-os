@@ -48,6 +48,10 @@ case "${1:-}" in
   --auto)
     sleep 50
     full > "$OUT" 2>&1
+    # A stuck desktop would keep the screen black, so stop it first, then go to the text console
+    timeout 20 systemctl stop sddm 2>/dev/null || true
+    pkill -9 -x kwin_wayland 2>/dev/null || true
+    sleep 2
     chvt 2 2>/dev/null || true
     sleep 4
     { echo; brief; echo; echo "(full report: $OUT)"; } > /dev/tty2 2>/dev/null || brief

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Reset password (recovery key)
+Comment=Set a new password with your recovery key
+Exec=konsole -e sudo /usr/local/bin/mas-recovery reset
+Icon=dialog-password
+Terminal=false
+Categories=System;Settings;

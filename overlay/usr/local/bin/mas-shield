@@ -178,6 +178,9 @@ def main():
         conns = inbound_connections()
         print(describe(conns) if conns else "No inbound connections.")
         return
+    if "--notify-only" in sys.argv:  # used on the X11 (XFCE) desktop, where the corner dot is not available
+        run_notifications_only()
+        return
     try:
         run_with_dot()
     except Exception as exc:  # no GTK / layer shell: still warn with notifications

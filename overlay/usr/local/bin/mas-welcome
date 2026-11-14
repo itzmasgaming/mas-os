@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# mas-welcome - the first screen after the first login: "Add a password or not?"
+# Shown once on an installed MAS. In the live ISO it shows every time you start the ISO.
+# Run  mas-welcome --force  to see it again.
+PENDING="${MAS_PENDING:-/var/lib/mas/firstrun-pending}"
+SETPASS="${MAS_SETPASS:-/usr/local/bin/mas-setpass}"
+MARK="$HOME/.config/mas/welcome-done"
+TITLE="Welcome to MAS"
+
+if [[ "${1:-}" != --force ]]; then
+  if [[ -e "$MARK" || ! -e "$PENDING" ]]; then exit 0; fi
+fi
+command -v kdialog >/dev/null 2>&1 || exit 0
+sleep "${MAS_WELCOME_DELAY:-4}"
+
+question=$'Welcome to MAS OS.\n\nDo you want to protect this computer with a password?\n\nAdd password: you choose a password now (it is also the root password) and get a recovery key in case you forget it.\nNo password: nobody is asked for a password when starting or unlocking.\n\nYou can change this any time later.'
+kdialog --title "$TITLE" \
+  --yes-label "Add password" --no-label "No password" --cancel-label "Ask me later" \
+  --yesnocancel "$question"
+choice=$?
+
+done_mark() { mkdir -p "$(dirname "$MARK")"; touch "$MARK"; }
+
+case "$choice" in
+  0)
+    for _ in 1 2 3 4 5; do
+      p1="$(kdialog --title "$TITLE" --password "Choose a password:")" || exit 0
+      p2="$(kdialog --title "$TITLE" --password "Type the same password again:")" || exit 0
+      if [[ -z "$p1" ]]; then
+        kdialog --title "$TITLE" --sorry "The password cannot be empty."
+        continue
+      fi
+      if [[ "$p1" != "$p2" ]]; then
+        kdialog --title "$TITLE" --sorry "The two passwords are different. Try again."
+        continue
+      fi
+      if key="$(printf '%s\n' "$p1" | sudo -n "$SETPASS" add)" && [[ -n "$key" ]]; then
+        done_mark
+        kdialog --title "$TITLE" --msgbox $'Done. Your password is set.\nIt is also the password of the root account.\n\nNext you get your RECOVERY KEY. Save it: it is the only way to reset a forgotten password.'
+        if ! "${MAS_SHOWKEY:-/usr/local/bin/mas-showkey}" "$key" >/dev/null 2>&1; then
+          # No window available: show the key in a plain box instead
+          kdialog --title "$TITLE" --msgbox "Your recovery key (write it down):"$'\n\n'"$key"
+        fi
+      else
+        kdialog --title "$TITLE" --error $'Could not set the password.\nYou can set it later in a terminal with:  passwd'
+      fi
+      exit 0
+    done
+    ;;
+  1)
+    if sudo -n "$SETPASS" none; then
+      done_mark
+      kdialog --title "$TITLE" --msgbox $'OK. This computer has no password (the root account has none either).\nYou can add one any time with the command:  passwd'
+    else
+      kdialog --title "$TITLE" --error $'Could not remove the password.\nYou can do it later in a terminal with:  sudo passwd -d "$USER"'
+    fi
+    ;;
+  *)
+    : # "Ask me later": nothing is saved, so it asks again at the next login
+    ;;
+esac
+exit 0

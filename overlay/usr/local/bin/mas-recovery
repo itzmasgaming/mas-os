@@ -1,0 +1,206 @@
+#!/usr/bin/env python3
+"""mas-recovery - the recovery key for the MAS password. Run as root.
+
+  mas-recovery new [--user NAME]  make a new recovery key for NAME and print it (the old key stops working)
+  mas-recovery reset              forgot the password: ask for the recovery key, then set a new password
+  mas-recovery status             say whether a recovery key exists
+
+The key itself is never stored. Only a salted hash of it is kept in /var/lib/mas/recovery (root only).
+A password set through MAS is used for the user AND for root.
+"""
+import base64
+import getpass
+import hashlib
+import hmac
+import json
+import os
+import pwd
+import secrets
+import shutil
+import subprocess
+import sys
+import time
+
+STORE = os.environ.get("MAS_RECOVERY_STORE", "/var/lib/mas/recovery")
+ITERS = 600_000
+
+
+def normalize(key):
+    return "".join(c for c in key.upper() if c.isalnum())
+
+
+def make_key():
+    raw = base64.b32encode(secrets.token_bytes(16)).decode().rstrip("=")  # 26 characters = 128 bits
+    return "-".join(raw[i:i + 4] for i in range(0, len(raw), 4))
+
+
+def digest(key, salt, iters=ITERS):
+    return hashlib.pbkdf2_hmac("sha256", normalize(key).encode(), salt, iters)
+
+
+def save(user, key):
+    salt = secrets.token_bytes(16)
+    data = {"user": user, "salt": salt.hex(), "iters": ITERS, "hash": digest(key, salt).hex()}
+    os.makedirs(os.path.dirname(STORE), exist_ok=True)
+    tmp = STORE + ".new"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, STORE)
+
+
+def load():
+    try:
+        with open(STORE) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
+
+
+def verify(data, key):
+    if len(normalize(key)) < 20:
+        return False
+    got = digest(key, bytes.fromhex(data["salt"]), int(data.get("iters", ITERS)))
+    return hmac.compare_digest(got.hex(), data["hash"])
+
+
+def show_qr(text):
+    if shutil.which("qrencode"):
+        subprocess.run(["qrencode", "-t", "ANSIUTF8", "-m", "1", text], check=False)
+
+
+def scan_camera():
+    if not shutil.which("zbarcam"):
+        print("   No camera scanner is installed here. Type the key instead.")
+        return ""
+    print("   Hold the QR code in front of the camera (40 seconds)...")
+    try:
+        out = subprocess.run(["zbarcam", "--raw", "-1", "--nodisplay", "/dev/video0"],
+                             capture_output=True, text=True, timeout=40).stdout
+    except (subprocess.TimeoutExpired, OSError):
+        out = ""
+    return out.strip().splitlines()[0] if out.strip() else ""
+
+
+def ask_key():
+    while True:
+        try:
+            ans = input("   Recovery key (S = scan with a camera, Enter = cancel): ").strip()
+        except EOFError:
+            return None
+        if not ans:
+            return None
+        if ans.lower() == "s":
+            got = scan_camera()
+            if got:
+                return got
+            continue
+        return ans
+
+
+def ask_new_password():
+    for _ in range(5):
+        p1 = getpass.getpass("   New password: ")
+        if not p1:
+            print("   The password cannot be empty.")
+            continue
+        p2 = getpass.getpass("   Type it again: ")
+        if p1 != p2:
+            print("   The two passwords are different. Try again.")
+            continue
+        return p1
+    return None
+
+
+def set_passwords(user, password):
+    # The same password for the user and for root
+    subprocess.run(["chpasswd"], input="%s:%s\nroot:%s\n" % (user, password, password), text=True, check=True)
+
+
+def cmd_new(argv):
+    user = os.environ.get("SUDO_USER") or ""
+    if "--user" in argv:
+        user = argv[argv.index("--user") + 1]
+    if not user or user == "root":
+        print("mas-recovery: tell me which user: mas-recovery new --user NAME", file=sys.stderr)
+        return 1
+    key = make_key()
+    save(user, key)
+    print(key)
+    return 0
+
+
+def cmd_reset():
+    print()
+    print("   MAS OS - forgot your password")
+    print("   -----------------------------")
+    data = load()
+    if not data:
+        print("   No recovery key was set up on this computer, so the password cannot be reset here.")
+        return 1
+    user = data["user"]
+    try:
+        pwd.getpwnam(user)
+    except KeyError:
+        print("   The account '%s' no longer exists." % user)
+        return 1
+    print("   Account: %s" % user)
+    print("   Type the recovery key you saved (like ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ).")
+    print()
+    for _ in range(5):
+        key = ask_key()
+        if key is None:
+            print("   Cancelled.")
+            return 1
+        if verify(data, key):
+            break
+        print("   That key is not right. Try again.")
+        time.sleep(2)
+    else:
+        print("   Too many wrong tries.")
+        time.sleep(5)
+        return 1
+    password = ask_new_password()
+    if password is None:
+        print("   No password was set.")
+        return 1
+    set_passwords(user, password)
+    newkey = make_key()
+    save(user, newkey)
+    print()
+    print("   Done. Your new password is set (for %s and for root)." % user)
+    print("   The old recovery key no longer works. Your NEW recovery key is:")
+    print()
+    print("       %s" % newkey)
+    print()
+    show_qr(newkey)
+    print("   Write it down or scan the code with your phone.")
+    try:
+        input("   Press Enter when you have saved it... ")
+    except EOFError:
+        pass
+    return 0
+
+
+def main():
+    args = sys.argv[1:]
+    if not args or args[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    if args[0] == "status":
+        data = load()
+        print("recovery key: yes (user %s)" % data["user"] if data else "recovery key: none")
+        return 0
+    if os.geteuid() != 0:
+        print("mas-recovery: run it as root (sudo mas-recovery %s)" % args[0], file=sys.stderr)
+        return 1
+    if args[0] == "new":
+        return cmd_new(args[1:])
+    if args[0] == "reset":
+        return cmd_reset()
+    print(__doc__)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

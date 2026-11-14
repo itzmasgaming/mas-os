@@ -5,11 +5,12 @@
 #   mas-gfx apply          run at boot (by mas-gfx.service) before the login screen starts
 #   mas-gfx normal         use the graphics card as normal (real computers)
 #   mas-gfx soft           draw with the CPU through OpenGL software rendering (llvmpipe)
-#   mas-gfx basic          draw with the CPU, no OpenGL at all (slowest, most reliable)
-#   mas-gfx auto           basic inside a virtual machine, normal on a real computer (default)
+#   mas-gfx basic          draw with the CPU, no OpenGL at all (slowest, most reliable Plasma mode)
+#   mas-gfx xfce           the simple XFCE desktop instead of Plasma (works in every virtual machine)
+#   mas-gfx auto           Plasma; basic drawing inside a virtual machine, normal on a real computer (default)
 #   mas-gfx status         show the current choice
 #
-# Order of choice: the boot option  mas.gfx=normal|soft|basic|auto  wins, then /etc/mas/gfx-mode, then auto.
+# Order of choice: the boot option  mas.gfx=normal|soft|basic|xfce|auto  wins, then /etc/mas/gfx-mode, then auto.
 # After changing it, run:  sudo systemctl restart sddm   (or reboot)
 set -u
 
@@ -19,7 +20,7 @@ ENVD="$ROOT/etc/environment.d/90-mas-gfx.conf"
 PROF="$ROOT/etc/profile.d/mas-gfx.sh"
 CMDLINE="${MAS_CMDLINE:-/proc/cmdline}"
 
-valid() { case "$1" in normal|soft|basic|auto) return 0 ;; *) return 1 ;; esac; }
+valid() { case "$1" in normal|soft|basic|auto|xfce) return 0 ;; *) return 1 ;; esac; }
 
 cmdline_mode() {
   local w
@@ -37,7 +38,7 @@ wanted_mode() {
   echo auto
 }
 
-resolve() { # auto -> basic or normal
+resolve() { # auto -> basic or normal (xfce stays xfce)
   if [[ "$1" != auto ]]; then echo "$1"; return; fi
   if systemd-detect-virt --vm --quiet 2>/dev/null; then echo basic; else echo normal; fi
 }
@@ -63,7 +64,7 @@ write_env() {
   local mode="$1" v
   mkdir -p "$(dirname "$ENVD")" "$(dirname "$PROF")"
   rm -f "$ENVD" "$PROF"
-  if [[ "$mode" == normal ]]; then return; fi
+  if [[ "$mode" == normal || "$mode" == xfce ]]; then return; fi
   {
     echo "# written by mas-gfx (mode: $mode) - do not edit, use: mas-gfx normal|soft|basic|auto"
     vars_for "$mode"
@@ -74,15 +75,20 @@ write_env() {
   } > "$PROF"
 }
 
-fix_autologin_session() { # live ISO only: make sure the autologin session file really exists
-  local f="$ROOT/etc/sddm.conf.d/autologin.conf" dir="$ROOT/usr/share/wayland-sessions" pick="" s
-  [[ -f "$f" && -d "$dir" ]] || return 0
-  for s in plasma plasmawayland plasma-wayland; do
-    if [[ -f "$dir/$s.desktop" ]]; then pick="$s"; break; fi
-  done
-  if [[ -z "$pick" ]]; then
-    pick="$(find "$dir" -maxdepth 1 -name '*plasma*.desktop' -printf '%f\n' 2>/dev/null | sort | head -n1)"
-    pick="${pick%.desktop}"
+fix_autologin_session() { # $1 = mode. Live ISO only: make sure the autologin session file really exists
+  local f="$ROOT/etc/sddm.conf.d/autologin.conf"
+  local wl="$ROOT/usr/share/wayland-sessions" xs="$ROOT/usr/share/xsessions" pick="" s
+  [[ -f "$f" ]] || return 0
+  if [[ "$1" == xfce && -f "$xs/xfce.desktop" ]]; then
+    pick="xfce"
+  elif [[ -d "$wl" ]]; then
+    for s in plasma plasmawayland plasma-wayland; do
+      if [[ -f "$wl/$s.desktop" ]]; then pick="$s"; break; fi
+    done
+    if [[ -z "$pick" ]]; then
+      pick="$(find "$wl" -maxdepth 1 -name '*plasma*.desktop' -printf '%f\n' 2>/dev/null | sort | head -n1)"
+      pick="${pick%.desktop}"
+    fi
   fi
   if [[ -n "$pick" ]]; then
     sed -i "s/^Session=.*/Session=$pick/" "$f"
@@ -94,14 +100,15 @@ case "${1:-status}" in
     want="$(wanted_mode)"
     mode="$(resolve "$want")"
     write_env "$mode"
-    fix_autologin_session
+    fix_autologin_session "$mode"
     echo "mas-gfx: mode=$mode (wanted: $want)"
     ;;
-  normal|soft|basic|auto)
+  normal|soft|basic|auto|xfce)
     if [[ $EUID -ne 0 && -z "${MAS_ROOT:-}" ]]; then echo "Run with sudo:  sudo mas-gfx $1" >&2; exit 1; fi
     mkdir -p "$(dirname "$CONF")"
     echo "$1" > "$CONF"
     write_env "$(resolve "$1")"
+    fix_autologin_session "$(resolve "$1")"
     echo "Saved: $1. Now run:  sudo systemctl restart sddm   (or reboot)"
     ;;
   status)
@@ -110,7 +117,7 @@ case "${1:-status}" in
     if systemd-detect-virt --vm --quiet 2>/dev/null; then echo "virtual machine: $(systemd-detect-virt --vm)"; else echo "virtual machine: no"; fi
     ;;
   *)
-    sed -n '2,15p' "$0"
+    sed -n '2,16p' "$0"
     exit 1
     ;;
 esac

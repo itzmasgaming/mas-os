@@ -1,0 +1,81 @@
+#!/usr/bin/env python3
+"""mas-showkey KEY - a window that shows the recovery key and a QR code to save it on a phone."""
+import os
+import subprocess
+import sys
+import tempfile
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+from gi.repository import Gdk, Gtk  # noqa: E402
+
+KEY = sys.argv[1] if len(sys.argv) > 1 else ""
+if not KEY:
+    sys.exit("usage: mas-showkey KEY")
+
+fd, PNG = tempfile.mkstemp(suffix=".png")
+os.close(fd)
+try:
+    subprocess.run(["qrencode", "-s", "8", "-m", "2", "-o", PNG, KEY], check=True)
+    HAVE_QR = True
+except (OSError, subprocess.CalledProcessError):
+    HAVE_QR = False
+
+
+class App(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="org.mas.ShowKey")
+
+    def do_activate(self):
+        win = Gtk.ApplicationWindow(application=self, title="Your recovery key")
+        win.set_default_size(460, 560)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        for side in ("top", "bottom", "start", "end"):
+            getattr(box, "set_margin_" + side)(20)
+
+        title = Gtk.Label(label="Save your recovery key")
+        title.add_css_class("title-2")
+        box.append(title)
+
+        info = Gtk.Label(
+            label="If you ever forget your password, this key lets you set a new one.\n"
+                  "Write it down, or scan the code with your phone to keep a copy.\n"
+                  "Anyone who has this key can reset your password, so keep it private.")
+        info.set_wrap(True)
+        info.set_justify(Gtk.Justification.CENTER)
+        box.append(info)
+
+        key = Gtk.Label()
+        key.set_markup('<span font_family="monospace" size="x-large" weight="bold">%s</span>' % KEY)
+        key.set_selectable(True)
+        key.set_wrap(True)
+        key.set_justify(Gtk.Justification.CENTER)
+        box.append(key)
+
+        if HAVE_QR:
+            pic = Gtk.Picture.new_for_filename(PNG)
+            pic.set_size_request(240, 240)
+            pic.set_can_shrink(True)
+            box.append(pic)
+
+        copy = Gtk.Button(label="Copy the key")
+        copy.connect("clicked", lambda *_: Gdk.Display.get_default().get_clipboard().set(KEY))
+        box.append(copy)
+
+        done = Gtk.Button(label="I saved it")
+        done.add_css_class("suggested-action")
+        done.connect("clicked", lambda *_: win.close())
+        box.append(done)
+
+        win.set_child(box)
+        win.present()
+
+
+try:
+    App().run([])
+finally:
+    try:
+        os.unlink(PNG)
+    except OSError:
+        pass

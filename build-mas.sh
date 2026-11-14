@@ -78,6 +78,10 @@ mkdir -p "$AIR/usr/share/mas-layer"
 cp -a "$HERE/overlay" "$AIR/usr/share/mas-layer/overlay"
 cp "$HERE/packages.txt" "$HERE/optional.txt" "$AIR/usr/share/mas-layer/"
 
+# Makes the "Add a password or not?" screen (mas-welcome) appear in the live session
+mkdir -p "$AIR/var/lib/mas"
+: > "$AIR/var/lib/mas/firstrun-pending"
+
 echo "==> Creating the live user 'mas'"
 ensure_line() { # file, key, line  (adds the line if no line starts with "key:")
   touch "$1"
@@ -113,7 +117,10 @@ echo "==> File permissions"
 PERMS="$WORK/perms.txt"
 {
   echo '  ["/etc/sudoers.d/mas-live"]="0:0:0440"'
+  echo '  ["/etc/sudoers.d/mas-welcome"]="0:0:0440"'
   echo '  ["/home/mas"]="1000:1000:0750"'
+  echo '  ["/home/mas/.config"]="1000:1000:0755"'
+  echo '  ["/home/mas/.config/kscreenlockerrc"]="1000:1000:0644"'
   echo '  ["/home/mas/Desktop"]="1000:1000:0755"'
   echo '  ["/home/mas/Desktop/install-mas.desktop"]="1000:1000:0755"'
   for f in "$HERE"/overlay/usr/local/bin/*; do
