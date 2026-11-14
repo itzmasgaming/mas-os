@@ -8,7 +8,7 @@ if [[ -z "${MAS_IN_TERM:-}" ]]; then
   exec env MAS_IN_TERM=1 konsole --profile "MAS Ubuntu" -e "$0" "$@"
 fi
 
-if ! podman container exists "$NAME" 2>/dev/null; then
+if ! distrobox list 2>/dev/null | grep -qw "$NAME"; then
   echo "Setting up Ubuntu LTS (first time only, needs internet)..."
   if ! distrobox create --yes --name "$NAME" --image "$IMAGE"; then
     echo "Setup failed."

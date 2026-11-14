@@ -3,17 +3,13 @@
 # in a virtual machine (VirtualBox, VMware, QEMU ...) whose virtual graphics card is weak.
 #
 #   mas-gfx apply          run at boot (by mas-gfx.service) before the login screen starts
-#   mas-gfx watch          live session only (by mas-gfx-watch.service): if the desktop did not
-#                          come up, switch to the next safer mode and restart the login screen
 #   mas-gfx normal         use the graphics card as normal (real computers)
-#   mas-gfx soft           Wayland, drawing with the CPU through OpenGL (llvmpipe)
-#   mas-gfx basic          Wayland, drawing with the CPU, no OpenGL at all (slowest)
-#   mas-gfx x11            old-style X11 desktop session (the most compatible one in a VM;
-#                          only exists while the plasma-x11-session package is available)
-#   mas-gfx auto           real computer: normal.  Virtual machine: tries x11, soft, basic in turn
+#   mas-gfx soft           draw with the CPU through OpenGL software rendering (llvmpipe)
+#   mas-gfx basic          draw with the CPU, no OpenGL at all (slowest, most reliable)
+#   mas-gfx auto           basic inside a virtual machine, normal on a real computer (default)
 #   mas-gfx status         show the current choice
 #
-# Order of choice: the boot option  mas.gfx=normal|soft|basic|x11|auto  wins, then /etc/mas/gfx-mode, then auto.
+# Order of choice: the boot option  mas.gfx=normal|soft|basic|auto  wins, then /etc/mas/gfx-mode, then auto.
 # After changing it, run:  sudo systemctl restart sddm   (or reboot)
 set -u
 
@@ -22,15 +18,8 @@ CONF="$ROOT/etc/mas/gfx-mode"
 ENVD="$ROOT/etc/environment.d/90-mas-gfx.conf"
 PROF="$ROOT/etc/profile.d/mas-gfx.sh"
 CMDLINE="${MAS_CMDLINE:-/proc/cmdline}"
-RUNDIR="${MAS_RUN:-/run/mas-gfx}"
-RUNG_FILE="$RUNDIR/rung"
-AUTOLOGIN="$ROOT/etc/sddm.conf.d/autologin.conf"
-LIVE_USER=mas
 
-valid() { case "$1" in normal|soft|basic|x11|auto) return 0 ;; *) return 1 ;; esac; }
-
-is_vm() { systemd-detect-virt --vm --quiet 2>/dev/null; }
-have_x11() { [[ -f "$ROOT/usr/share/xsessions/plasmax11.desktop" ]]; }
+valid() { case "$1" in normal|soft|basic|auto) return 0 ;; *) return 1 ;; esac; }
 
 cmdline_mode() {
   local w
@@ -43,57 +32,29 @@ wanted_mode() {
   local m
   m="$(cmdline_mode)"
   if [[ -n "$m" ]] && valid "$m"; then echo "$m"; return; fi
-  m=""
-  [[ -r "$CONF" ]] && m="$(tr -d '[:space:]' < "$CONF")"
+  m="$(cat "$CONF" 2>/dev/null | tr -d '[:space:]' || true)"
   if [[ -n "$m" ]] && valid "$m"; then echo "$m"; return; fi
   echo auto
 }
 
-ladder() { # the modes "auto" tries inside a virtual machine, best first
-  if have_x11; then echo x11; fi
-  echo soft
-  echo basic
-}
-
-current_rung() {
-  local r
-  r="$(cat "$RUNG_FILE" 2>/dev/null || echo 0)"
-  [[ "$r" =~ ^[0-9]+$ ]] || r=0
-  echo "$r"
-}
-
-resolve() { # any wanted mode -> normal|soft|basic|x11
-  local m="$1" r n
-  if [[ "$m" == x11 ]] && ! have_x11; then m=soft; fi
-  if [[ "$m" != auto ]]; then echo "$m"; return; fi
-  if ! is_vm; then echo normal; return; fi
-  # Virtual machine. On the live ISO walk the ladder; on an installed system use soft
-  # (the login screen lets you pick "Plasma (X11)" yourself).
-  if [[ -f "$AUTOLOGIN" ]]; then
-    mapfile -t L < <(ladder)
-    r="$(current_rung)"; n="${#L[@]}"
-    (( r >= n )) && r=$(( n - 1 ))
-    echo "${L[$r]}"
-  else
-    echo soft
-  fi
+resolve() { # auto -> basic or normal
+  if [[ "$1" != auto ]]; then echo "$1"; return; fi
+  if systemd-detect-virt --vm --quiet 2>/dev/null; then echo basic; else echo normal; fi
 }
 
 vars_for() { # prints NAME=value lines for a mode
   case "$1" in
     soft)
       echo "LIBGL_ALWAYS_SOFTWARE=1"
-      echo "KWIN_FORCE_SW_CURSOR=1"
+      echo "KWIN_DRM_NO_AMS=1"
       ;;
     basic)
       echo "LIBGL_ALWAYS_SOFTWARE=1"
-      echo "KWIN_FORCE_SW_CURSOR=1"
       echo "KWIN_COMPOSE=Q"
+      echo "KWIN_DRM_NO_AMS=1"
+      echo "KWIN_FORCE_SW_CURSOR=1"
       echo "QT_QUICK_BACKEND=software"
       echo "GSK_RENDERER=cairo"
-      ;;
-    x11)
-      echo "LIBGL_ALWAYS_SOFTWARE=1"
       ;;
   esac
 }
@@ -104,7 +65,7 @@ write_env() {
   rm -f "$ENVD" "$PROF"
   if [[ "$mode" == normal ]]; then return; fi
   {
-    echo "# written by mas-gfx (mode: $mode) - do not edit, use: mas-gfx normal|soft|basic|x11|auto"
+    echo "# written by mas-gfx (mode: $mode) - do not edit, use: mas-gfx normal|soft|basic|auto"
     vars_for "$mode"
   } > "$ENVD"
   {
@@ -113,114 +74,43 @@ write_env() {
   } > "$PROF"
 }
 
-fix_autologin_session() { # live ISO only: make the autologin session match the mode and really exist
-  local mode="$1" f="$AUTOLOGIN" wl="$ROOT/usr/share/wayland-sessions" xs="$ROOT/usr/share/xsessions" pick="" s
-  [[ -f "$f" ]] || return 0
-  if [[ "$mode" == x11 && -f "$xs/plasmax11.desktop" ]]; then
-    pick=plasmax11
-  elif [[ -d "$wl" ]]; then
-    for s in plasma plasmawayland plasma-wayland; do
-      if [[ -f "$wl/$s.desktop" ]]; then pick="$s"; break; fi
-    done
-    if [[ -z "$pick" ]]; then
-      pick="$(find "$wl" -maxdepth 1 -name '*plasma*.desktop' -printf '%f\n' 2>/dev/null | sort | head -n1)"
-      pick="${pick%.desktop}"
-    fi
+fix_autologin_session() { # live ISO only: make sure the autologin session file really exists
+  local f="$ROOT/etc/sddm.conf.d/autologin.conf" dir="$ROOT/usr/share/wayland-sessions" pick="" s
+  [[ -f "$f" && -d "$dir" ]] || return 0
+  for s in plasma plasmawayland plasma-wayland; do
+    if [[ -f "$dir/$s.desktop" ]]; then pick="$s"; break; fi
+  done
+  if [[ -z "$pick" ]]; then
+    pick="$(find "$dir" -maxdepth 1 -name '*plasma*.desktop' -printf '%f\n' 2>/dev/null | sort | head -n1)"
+    pick="${pick%.desktop}"
   fi
   if [[ -n "$pick" ]]; then
-    if grep -q '^Session=' "$f"; then sed -i "s/^Session=.*/Session=$pick/" "$f"; else printf 'Session=%s\n' "$pick" >> "$f"; fi
+    sed -i "s/^Session=.*/Session=$pick/" "$f"
   fi
-}
-
-remember_x11_session() { # installed system: make the login screen start on "Plasma (X11)"
-  local st="$ROOT/var/lib/sddm/state.conf"
-  [[ -f "$ROOT/usr/share/xsessions/plasmax11.desktop" && ! -f "$AUTOLOGIN" ]] || return 0
-  mkdir -p "$(dirname "$st")"
-  if [[ -f "$st" ]] && grep -q '^Session=' "$st"; then
-    sed -i 's|^Session=.*|Session=/usr/share/xsessions/plasmax11.desktop|' "$st"
-  elif [[ -f "$st" ]] && grep -q '^\[Last\]' "$st"; then
-    sed -i '/^\[Last\]/a Session=/usr/share/xsessions/plasmax11.desktop' "$st"
-  else
-    printf '[Last]\nSession=/usr/share/xsessions/plasmax11.desktop\n' >> "$st"
-  fi
-}
-
-apply_now() {
-  local want mode
-  want="$(wanted_mode)"
-  mode="$(resolve "$want")"
-  write_env "$mode"
-  fix_autologin_session "$mode"
-  [[ "$mode" == x11 ]] && remember_x11_session
-  echo "mas-gfx: mode=$mode (wanted: $want)"
-}
-
-healthy() { # is the desktop really up (and has stayed up for at least 20 seconds)?
-  local pid age
-  pid="$(pgrep -u "$LIVE_USER" -x plasmashell | head -n1)" || return 1
-  [[ -n "$pid" ]] || return 1
-  pgrep -u "$LIVE_USER" -x kwin_wayland >/dev/null 2>&1 || pgrep -u "$LIVE_USER" -x kwin_x11 >/dev/null 2>&1 || return 1
-  age="$(ps -o etimes= -p "$pid" 2>/dev/null | tr -d ' ')"
-  [[ "$age" =~ ^[0-9]+$ ]] && (( age >= 20 ))
-}
-
-watch_loop() {
-  local want t limit r n
-  [[ -f "$AUTOLOGIN" ]] || { echo "mas-gfx watch: not a live session, nothing to do"; return 0; }
-  want="$(wanted_mode)"
-  [[ "$want" == auto ]] || { echo "mas-gfx watch: mode was chosen by hand ($want), not watching"; return 0; }
-  is_vm || { echo "mas-gfx watch: real computer, not watching"; return 0; }
-  limit="${MAS_WATCH_TIMEOUT:-150}"
-  mkdir -p "$RUNDIR"
-  while true; do
-    t=0
-    while (( t < limit )); do
-      if healthy; then echo "mas-gfx watch: desktop is up (mode $(resolve auto))"; return 0; fi
-      sleep 5; t=$(( t + 5 ))
-    done
-    mapfile -t L < <(ladder); n="${#L[@]}"
-    r="$(current_rung)"; r=$(( r + 1 ))
-    if (( r >= n )); then echo "mas-gfx watch: no safer mode left, giving up"; return 1; fi
-    echo "mas-gfx watch: desktop did not start in ${limit}s, trying '${L[$r]}'"
-    echo "$r" > "$RUNG_FILE"
-    apply_now
-    loginctl terminate-user "$LIVE_USER" >/dev/null 2>&1 || true
-    systemctl restart sddm.service
-    sleep 10
-  done
 }
 
 case "${1:-status}" in
   apply)
-    mkdir -p "$RUNDIR"
-    apply_now
+    want="$(wanted_mode)"
+    mode="$(resolve "$want")"
+    write_env "$mode"
+    fix_autologin_session
+    echo "mas-gfx: mode=$mode (wanted: $want)"
     ;;
-  watch)
-    watch_loop
-    ;;
-  normal|soft|basic|x11|auto)
+  normal|soft|basic|auto)
     if [[ $EUID -ne 0 && -z "${MAS_ROOT:-}" ]]; then echo "Run with sudo:  sudo mas-gfx $1" >&2; exit 1; fi
-    if [[ "$1" == x11 ]] && ! have_x11; then
-      echo "The X11 session is not installed in this system (package plasma-x11-session)." >&2
-      echo "Use 'soft' or 'basic' instead." >&2
-      exit 1
-    fi
-    mkdir -p "$(dirname "$CONF")" "$RUNDIR"
+    mkdir -p "$(dirname "$CONF")"
     echo "$1" > "$CONF"
-    rm -f "$RUNG_FILE"
     write_env "$(resolve "$1")"
-    fix_autologin_session "$(resolve "$1")"
-    [[ "$(resolve "$1")" == x11 ]] && remember_x11_session
     echo "Saved: $1. Now run:  sudo systemctl restart sddm   (or reboot)"
     ;;
   status)
     want="$(wanted_mode)"
-    echo "wanted: $want   in use: $(resolve "$want")   rung: $(current_rung)"
-    if is_vm; then echo "virtual machine: $(systemd-detect-virt --vm)"; else echo "virtual machine: no"; fi
-    if have_x11; then echo "X11 session: available"; else echo "X11 session: not installed"; fi
+    echo "wanted: $want   in use: $(resolve "$want")"
+    if systemd-detect-virt --vm --quiet 2>/dev/null; then echo "virtual machine: $(systemd-detect-virt --vm)"; else echo "virtual machine: no"; fi
     ;;
   *)
-    sed -n '2,19p' "$0"
+    sed -n '2,15p' "$0"
     exit 1
     ;;
 esac

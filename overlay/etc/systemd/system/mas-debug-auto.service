@@ -1,0 +1,9 @@
+[Unit]
+Description=MAS troubleshoot report (shown on the second text console)
+ConditionPathExists=/run/mas-debug-auto
+After=sddm.service
+
+[Service]
+Type=oneshot
+TimeoutStartSec=150
+ExecStart=/usr/local/bin/mas-debug --auto

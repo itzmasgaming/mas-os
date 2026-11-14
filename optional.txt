@@ -9,9 +9,9 @@ waydroid
 # Lets the connection dot sit on top of everything in the top-right corner
 gtk4-layer-shell
 
-# X11 desktop session: the safety net for virtual machines with a weak graphics card
-plasma-x11-session
-xf86-video-vmware
+# Restore points: a snapshot before every update, and boot into an old snapshot
+snap-pac
+grub-btrfs
 
 # Nice to have
 sddm-kcm

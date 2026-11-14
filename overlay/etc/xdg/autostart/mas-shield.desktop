@@ -2,6 +2,6 @@
 Type=Application
 Name=MAS Shield
 Comment=Shows a dot when something connects to this computer
-Exec=env LD_PRELOAD=/usr/lib/libgtk4-layer-shell.so /usr/local/bin/mas-shield
+Exec=env GDK_BACKEND=wayland LD_PRELOAD=/usr/lib/libgtk4-layer-shell.so /usr/local/bin/mas-shield
 NoDisplay=true
 OnlyShowIn=KDE;

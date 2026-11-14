@@ -1,1 +1,3 @@
 MAS OS live session. Double-click "Install MAS" on the desktop to install it.
+Desktop did not start or the screen is black?  Type:  mas-debug
+Change how the desktop is drawn:  sudo mas-gfx basic   (or soft, normal, auto)  then  sudo systemctl restart sddm

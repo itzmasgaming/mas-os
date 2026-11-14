@@ -39,7 +39,7 @@ sed -i '/^#\[multilib\]/{s/^#//;n;s/^#//}' "$PACCONF"
 if ! grep -q '^\[multilib\]' "$PACCONF"; then
   printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> "$PACCONF"
 fi
-in_root pacman -Syu --noconfirm
+in_root pacman -Sy --noconfirm
 
 echo "==> Installing MAS packages"
 mapfile -t REQ < <(grep -vE '^\s*(#|$)' "$LAYER/packages.txt")
@@ -52,26 +52,13 @@ while read -r pkg; do
     && echo "    + $pkg" || echo "    (skipped optional package: $pkg)"
 done < <(grep -vE '^\s*(#|$)' "$LAYER/optional.txt")
 
-if [[ -f "$LAYER/installed.txt" ]]; then
-  echo "==> Installing restore-point tools"
-  while read -r pkg; do
-    in_root pacman -S --needed --noconfirm "$pkg" >/dev/null 2>&1 \
-      && echo "    + $pkg" || echo "    (skipped: $pkg)"
-  done < <(grep -vE '^\s*(#|$)' "$LAYER/installed.txt")
-fi
-
 echo "==> Adding MAS branding, launchers and the shield"
 cp -a "$LAYER/overlay/." "${R:-/}"
 chmod 755 "$R"/usr/local/bin/mas-* 2>/dev/null || true
 
-if [[ "$(in_root findmnt -no FSTYPE / 2>/dev/null)" == btrfs ]] && ! in_root snapper list-configs --no-dbus 2>/dev/null | grep -qw root; then
-  echo "==> Creating the Snapper restore-point setup"
-  in_root snapper --no-dbus -c root create-config / >/dev/null 2>&1 || echo "    (could not create it; run: sudo snapper -c root create-config /)"
-fi
-
 echo "==> Turning on services"
 in_root systemctl disable systemd-networkd.service iwd.service >/dev/null 2>&1 || true
-in_root systemctl enable sddm.service NetworkManager.service nftables.service mas-gfx.service || true
+in_root systemctl enable sddm.service NetworkManager.service nftables.service mas-gfx.service
 in_root systemctl enable waydroid-container.service >/dev/null 2>&1 || true
 in_root systemctl enable snapper-timeline.timer snapper-cleanup.timer grub-btrfs.path >/dev/null 2>&1 || true
 

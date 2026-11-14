@@ -27,13 +27,7 @@ read -r -p "Press Enter to start, or Ctrl+C to cancel..." _
 archinstall
 
 TARGET=/mnt/archinstall
-if ! mountpoint -q "$TARGET"; then
-  echo
-  echo "The new system is not mounted at $TARGET."
-  echo "If you just installed, mount its root partition somewhere (for example: sudo mount /dev/sdX2 /mnt/new)"
-  read -r -p "Folder where the new system is mounted (empty = skip): " TARGET
-fi
-if [[ -n "$TARGET" && -d "$TARGET/etc" ]]; then
+if mountpoint -q "$TARGET"; then
   echo
   echo "Adding MAS to the new system..."
   mas-apply "$TARGET"
@@ -41,7 +35,8 @@ if [[ -n "$TARGET" && -d "$TARGET/etc" ]]; then
   echo "All done. You can reboot now (remove the USB stick or ISO first)."
 else
   echo
-  echo "Skipped. To add MAS later, start this ISO again, mount the installed system and run:"
-  echo "    sudo mas-apply /path/to/mounted/system"
+  echo "Could not find the new system at $TARGET."
+  echo "If the install finished, mount it and run:  sudo mas-apply /path/to/mounted/system"
+  echo "Or reboot into the new system and run:      sudo mas-apply"
 fi
 read -r -p "Press Enter to close..." _

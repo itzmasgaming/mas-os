@@ -14,7 +14,5 @@ fi
 sudo docker run --rm --privileged -v "$PWD":/mas -w /mas archlinux:latest \
   bash -c "pacman -Syu --noconfirm --needed archiso && bash build-mas.sh"
 
-sudo chown -R "$(id -u):$(id -g)" out 2>/dev/null || true
-
 echo
 echo "Finished. Look in the 'out' folder for the .iso file."

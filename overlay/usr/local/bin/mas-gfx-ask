@@ -1,0 +1,46 @@
+#!/usr/bin/env bash
+# mas-gfx-ask - the live system asks, before the login screen starts, how the desktop should be drawn.
+# Runs from mas-gfx-ask.service on the first text console. No key pressed = Automatic.
+# Skipped when the boot option  mas.gfx=...  is already given.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+RUN="${MAS_RUN:-/run}"
+CMDLINE="${MAS_CMDLINE:-/proc/cmdline}"
+
+if grep -q 'mas\.gfx=' "$CMDLINE" 2>/dev/null; then exit 0; fi
+
+clear 2>/dev/null || true
+cat <<'EOF'
+
+   MAS OS
+   ------
+   How should the desktop be drawn?
+
+     1   Automatic       (recommended)
+     2   Safe            CPU drawing, no 3D. Use this if the screen goes black.
+     3   OpenGL on CPU   a bit faster than Safe, still no graphics card needed
+     4   Graphics card   for real computers
+     5   Troubleshoot    starts normally, then shows a report about what went wrong
+
+   Press 1-5. Nothing pressed in 12 seconds = 1.
+
+EOF
+
+key=""
+read -rsn1 -t 12 key || key=""
+
+mode=auto
+case "$key" in
+  2) mode=basic ;;
+  3) mode=soft ;;
+  4) mode=normal ;;
+  5) mode=auto; touch "$RUN/mas-debug-auto" ;;
+esac
+
+"$HERE/mas-gfx" "$mode" >/dev/null 2>&1 || true
+echo "   Starting with: $mode"
+if [[ "$key" == 5 && -z "${MAS_ROOT:-}" ]]; then
+  echo "   A report will appear on screen about a minute after the desktop starts."
+  systemctl start --no-block mas-debug-auto.service >/dev/null 2>&1 || true
+fi
+sleep 1
+exit 0

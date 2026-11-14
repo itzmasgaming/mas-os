@@ -108,21 +108,16 @@ class Watcher:
 
 
 def run_with_dot():
-    if os.environ.get("XDG_SESSION_TYPE") == "wayland":
-        os.environ.setdefault("GDK_BACKEND", "wayland")
     import gi
     gi.require_version("Gtk", "4.0")
     gi.require_version("Gtk4LayerShell", "1.0")
     from gi.repository import Gdk, GLib, Gtk
     from gi.repository import Gtk4LayerShell as LayerShell
 
-    if os.environ.get("XDG_SESSION_TYPE") != "wayland":
-        raise RuntimeError("not a Wayland session")
     if not LayerShell.is_supported():
         raise RuntimeError("layer shell not supported by this compositor")
 
     watcher = Watcher()
-    state = {"activated": False}
 
     class DotApp(Gtk.Application):
         def __init__(self):
@@ -130,7 +125,6 @@ def run_with_dot():
             self.win = None
 
         def do_activate(self):
-            state["activated"] = True
             css = Gtk.CssProvider()
             if hasattr(css, "load_from_string"):
                 css.load_from_string(CSS)
@@ -154,7 +148,6 @@ def run_with_dot():
             LayerShell.set_margin(self.win, LayerShell.Edge.TOP, 6)
             LayerShell.set_margin(self.win, LayerShell.Edge.RIGHT, 10)
             LayerShell.set_namespace(self.win, "mas-shield")
-            LayerShell.set_keyboard_mode(self.win, LayerShell.KeyboardMode.NONE)
 
             self.hold()  # keep running while the dot is hidden
             GLib.timeout_add_seconds(POLL_SECONDS, self.tick)
@@ -170,8 +163,6 @@ def run_with_dot():
             return True
 
     DotApp().run([])
-    if not state["activated"]:
-        raise RuntimeError("could not open a Wayland display")
 
 
 def run_notifications_only():

@@ -3,9 +3,8 @@
 This folder turns into the **MAS OS ISO** (a disk image you can start in a virtual machine or from a USB stick).
 It builds MAS on top of Arch Linux with a KDE Plasma desktop that is restyled with your logo.
 
-> **Status: reviewed and fixed, but still not booted by the author.** The scripts were checked line by line and
-> dry-run against the real archiso profile, but a full build and boot could not be run. If the build stops
-> or the desktop does not appear, send the error text (or the output of `mas-debug`) and it will be fixed.
+> **Status: untested.** This kit was written without being able to run a build or boot the result.
+> The first build may stop with an error. If it does, send the error text and it will be fixed.
 
 ## What the ISO contains
 
@@ -22,8 +21,7 @@ It builds MAS on top of Arch Linux with a KDE Plasma desktop that is restyled wi
 | Windows-style right-click menus, window buttons, light/dark mode | Built into KDE Plasma. Light/dark: Settings > Colors & Themes. The MAS wallpaper switches with it |
 | Logo as default background | `MAS` wallpaper (dark and light versions), also on the login screen and the start button |
 | Sandbox VM that resets when closed | `Sandbox` launcher: a throw-away QEMU virtual machine. Put an `.iso`, `.qcow2` or `.img` in `~/Sandbox` first |
-| Restore points | Btrfs + Snapper. A snapshot is taken before every update (installed Btrfs system only; set up by the installer step) |
-| Live session RAM space | The live session has 2 GB of RAM space for downloads (Brave, Ubuntu). Use 6 GB+ of VM RAM, or install to disk |
+| Restore points | Btrfs + Snapper. A snapshot is taken before every update (installed system only) |
 | Install it on a disk | `Install MAS` icon on the live desktop |
 
 ## Step 1 - Build the ISO
@@ -71,20 +69,18 @@ Android apps (Waydroid) and heavy games need real hardware or a GPU. Expect them
 
 ### Black screen with only a mouse cursor?
 
-The cause is nearly always the desktop (KDE Plasma on Wayland) failing to draw on the virtual graphics card.
-This version protects against it in three ways:
+After the first boot menu, MAS shows its own menu on a text screen: **How should the desktop be drawn?** Press **2** (Safe) if the screen goes black. Press **5** (Troubleshoot) to start normally and get a report about what went wrong on the second text console about a minute later (Right Ctrl + F2 brings it back). Nothing pressed for 12 seconds means 1 (Automatic).
 
-1. **Automatic fallback.** In a VM, the live session tries the X11 desktop first (the most compatible), then Wayland with
-   CPU drawing, then basic CPU drawing. If the desktop is not up after about 2.5 minutes, it switches to the next
-   one by itself and restarts the login. Just wait a few minutes.
-2. **Boot menu entries.** The boot menu now has **MAS OS - safe graphics: X11**, **Wayland CPU drawing**,
-   **basic**, and **text mode only**. If the first entry shows black, reboot and pick the X11 entry.
-3. **Manual control** from a text console: `sudo mas-gfx x11` (or `soft`, `basic`, `normal`, `auto`), then
-   `sudo systemctl restart sddm`.
+To skip that menu or set the mode by hand:
 
-VM settings that help: Graphics Controller **VMSVGA**, Video Memory **128 MB**, 3D Acceleration **off**.
-Still black? Press **Right Ctrl + F3** for a text console, log in as `mas` (no password), run `mas-debug`
-and send a screenshot (it also saves `~/mas-debug.txt`).
+1. Shut the VM down, then in Display settings make sure 3D Acceleration is **off** and Graphics Controller is **VMSVGA**.
+2. Start it again. At the boot menu press **e** (UEFI) or **Tab** (BIOS) and add one of these to the end of the line, then continue the boot:
+   - `mas.gfx=basic` (CPU drawing, most reliable)
+   - `mas.gfx=soft` (OpenGL on the CPU)
+   - `mas.gfx=normal` (use the virtual graphics card as is)
+3. Still black? Press **Right Ctrl + F3** to get a text console, log in as `mas` (no password) and run `mas-debug`. Send a screenshot of what it prints.
+
+On a text console you can also change the mode for good with `sudo mas-gfx basic` (or `soft`, `normal`, `auto`) followed by `sudo systemctl restart sddm`.
 
 ## Step 3 - Install it on a disk
 
@@ -93,8 +89,7 @@ On the live desktop, double-click **Install MAS** and follow the steps. It start
 
 ## Not done yet
 
-- Plasma 6.8 and newer drop the X11 session. If the `plasma-x11-session` package is no longer in Arch, the build skips it and
-  the fallback ladder uses only the two Wayland CPU-drawing modes (the build log says "optional package not found").
+- Plasma 6.8 and newer have no X11 session, so MAS is Wayland only. Weak virtual graphics cards are handled by `mas-gfx`, not by an X11 fallback.
 - A performance kernel (Zen/XanMod). It uses the normal Arch kernel for now so that it boots reliably.
 - AppArmor.
 - NVIDIA drivers (open-source AMD and Intel graphics are included).

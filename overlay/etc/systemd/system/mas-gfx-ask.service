@@ -1,0 +1,20 @@
+[Unit]
+Description=MAS asks how the desktop should be drawn (live system only)
+ConditionPathExists=/etc/sddm.conf.d/autologin.conf
+Before=mas-gfx.service sddm.service display-manager.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+TimeoutStartSec=40
+StandardInput=tty-force
+StandardOutput=tty
+StandardError=tty
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+ExecStart=/usr/local/bin/mas-gfx-ask
+
+[Install]
+WantedBy=multi-user.target
