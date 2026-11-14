@@ -15,6 +15,9 @@ xdg-desktop-portal-kde
 polkit-kde-agent
 kio-extras
 xorg-xwayland
+xorg-server
+xorg-xauth
+xf86-input-libinput
 dolphin
 konsole
 ark
@@ -71,3 +74,5 @@ snapper
 # Small utilities
 xdg-utils
 git
+sudo
+pciutils

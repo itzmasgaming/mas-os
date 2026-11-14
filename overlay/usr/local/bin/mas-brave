@@ -13,7 +13,7 @@ if ! flatpak info "$APP" >/dev/null 2>&1; then
     read -r -p "Press Enter to close..." _
     exit 1
   fi
-  xdg-settings set default-web-browser com.brave.Browser.desktop >/dev/null 2>&1 || true
+  true  # default browser is already the MAS Brave launcher
 fi
 
 exec flatpak run "$APP" "$@"

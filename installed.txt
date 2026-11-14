@@ -1,0 +1,4 @@
+# MAS OS - extra packages for the INSTALLED system only (not put on the live ISO).
+# Restore points: a snapshot before every update, and boot into an old snapshot.
+snap-pac
+grub-btrfs

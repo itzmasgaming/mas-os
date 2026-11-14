@@ -1,0 +1,11 @@
+[Unit]
+Description=MAS graphics watchdog (live session: switches to a safer drawing mode if the desktop does not start)
+After=sddm.service mas-gfx.service
+ConditionPathExists=/etc/sddm.conf.d/autologin.conf
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mas-gfx watch
+
+[Install]
+WantedBy=multi-user.target

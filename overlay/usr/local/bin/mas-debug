@@ -13,7 +13,7 @@ OUT="$HOME/mas-debug.txt"
   echo
   echo "== sddm autologin =="
   cat /etc/sddm.conf.d/autologin.conf 2>/dev/null
-  echo "sessions: $(ls /usr/share/wayland-sessions 2>/dev/null | tr '\n' ' ')"
+  echo "wayland sessions: $(ls /usr/share/wayland-sessions 2>/dev/null | tr '\n' ' ')  x11 sessions: $(ls /usr/share/xsessions 2>/dev/null | tr '\n' ' ')"
   echo
   echo "== graphics devices =="
   ls /dev/dri 2>/dev/null
@@ -21,6 +21,11 @@ OUT="$HOME/mas-debug.txt"
   echo
   echo "== services =="
   systemctl is-active sddm mas-gfx 2>/dev/null
+  echo
+  echo "== running desktop processes =="
+  pgrep -a 'kwin|plasmashell|Xorg|sddm' 2>/dev/null | cut -c1-120
+  echo "gfx watchdog:"; journalctl -b -u mas-gfx-watch --no-pager 2>/dev/null | tail -n 6
+  echo "gfx env file:"; cat /etc/environment.d/90-mas-gfx.conf 2>/dev/null
   echo
   echo "== sddm log (last 25) =="
   journalctl -b -u sddm --no-pager 2>/dev/null | tail -n 25
