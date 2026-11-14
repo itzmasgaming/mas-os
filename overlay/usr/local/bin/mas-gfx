@@ -76,9 +76,12 @@ write_env() {
 }
 
 fix_autologin_session() { # $1 = mode. Live ISO only: make sure the autologin session file really exists
-  local f="$ROOT/etc/sddm.conf.d/autologin.conf"
-  local wl="$ROOT/usr/share/wayland-sessions" xs="$ROOT/usr/share/xsessions" pick="" s
-  [[ -f "$f" ]] || return 0
+  local f files=() wl="$ROOT/usr/share/wayland-sessions" xs="$ROOT/usr/share/xsessions" pick="" s
+  # the live ISO and the installed default account each have an autologin file
+  for f in "$ROOT/etc/sddm.conf.d/autologin.conf" "$ROOT/etc/sddm.conf.d/mas-default-autologin.conf"; do
+    if [[ -f "$f" ]]; then files+=("$f"); fi
+  done
+  [[ ${#files[@]} -gt 0 ]] || return 0
   if [[ "$1" == xfce && -f "$xs/xfce.desktop" ]]; then
     pick="xfce"
   elif [[ -d "$wl" ]]; then
@@ -91,7 +94,13 @@ fix_autologin_session() { # $1 = mode. Live ISO only: make sure the autologin se
     fi
   fi
   if [[ -n "$pick" ]]; then
-    sed -i "s/^Session=.*/Session=$pick/" "$f"
+    for f in "${files[@]}"; do
+      if grep -q '^Session=' "$f"; then
+        sed -i "s/^Session=.*/Session=$pick/" "$f"
+      else
+        echo "Session=$pick" >> "$f"
+      fi
+    done
   fi
 }
 

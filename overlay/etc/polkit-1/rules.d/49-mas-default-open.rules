@@ -1,0 +1,14 @@
+// While the default account "mas" has no password, it can do administrator tasks
+// (for example create accounts in Settings) without being asked for a password.
+// The file /var/lib/mas/default-open exists only while that is the case: it is removed
+// when the default account gets a password or is deleted.
+polkit.addRule(function(action, subject) {
+    if (subject.user == "mas") {
+        try {
+            polkit.spawn(["/usr/bin/test", "-e", "/var/lib/mas/default-open"]);
+            return polkit.Result.YES;
+        } catch (e) {
+            // the file is not there: ask as usual
+        }
+    }
+});

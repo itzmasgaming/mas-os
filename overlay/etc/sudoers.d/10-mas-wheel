@@ -1,0 +1,2 @@
+# Administrator accounts (group wheel) can use sudo with their own password.
+%wheel ALL=(ALL:ALL) ALL

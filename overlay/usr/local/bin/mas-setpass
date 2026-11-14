@@ -25,6 +25,11 @@ case "${1:-}" in
       exit 1
     fi
     rm -f "$PENDING"
+    if [[ "$who" == "${MAS_DEFAULT_ACCOUNT:-mas}" ]]; then
+      # The default account now has a password, so it stops being the "open" account
+      rm -f "${MAS_GATE:-/var/lib/mas/default-open}" "${MAS_OPEN_SUDOERS:-/etc/sudoers.d/mas-default-open}" \
+            "${MAS_OPEN_AUTOLOGIN:-/etc/sddm.conf.d/mas-default-autologin.conf}"
+    fi
     printf '%s\n' "$key"
     ;;
   none)

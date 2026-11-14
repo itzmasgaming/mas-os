@@ -81,6 +81,8 @@ cp "$HERE/packages.txt" "$HERE/optional.txt" "$AIR/usr/share/mas-layer/"
 # Makes the "Add a password or not?" screen (mas-welcome) appear in the live session
 mkdir -p "$AIR/var/lib/mas"
 : > "$AIR/var/lib/mas/firstrun-pending"
+# The live account "mas" has no password and is never asked for an administrator password
+: > "$AIR/var/lib/mas/default-open"
 
 echo "==> Creating the live user 'mas'"
 ensure_line() { # file, key, line  (adds the line if no line starts with "key:")
@@ -118,6 +120,7 @@ PERMS="$WORK/perms.txt"
 {
   echo '  ["/etc/sudoers.d/mas-live"]="0:0:0440"'
   echo '  ["/etc/sudoers.d/mas-welcome"]="0:0:0440"'
+  echo '  ["/etc/sudoers.d/10-mas-wheel"]="0:0:0440"'
   echo '  ["/home/mas"]="1000:1000:0750"'
   echo '  ["/home/mas/.config"]="1000:1000:0755"'
   echo '  ["/home/mas/.config/kscreenlockerrc"]="1000:1000:0644"'

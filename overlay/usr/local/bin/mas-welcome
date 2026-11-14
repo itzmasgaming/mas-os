@@ -8,6 +8,8 @@ MARK="$HOME/.config/mas/welcome-done"
 TITLE="Welcome to MAS"
 
 if [[ "${1:-}" != --force ]]; then
+  # Only the default account "mas" gets this screen; an account you made yourself already has its own password
+  if [[ "$(id -un)" != "${MAS_DEFAULT_ACCOUNT:-mas}" ]]; then exit 0; fi
   if [[ -e "$MARK" || ! -e "$PENDING" ]]; then exit 0; fi
 fi
 command -v kdialog >/dev/null 2>&1 || exit 0

@@ -55,11 +55,36 @@ done < <(grep -vE '^\s*(#|$)' "$LAYER/optional.txt")
 echo "==> Adding MAS branding, launchers and the shield"
 cp -a "$LAYER/overlay/." "${R:-/}"
 chmod 755 "$R"/usr/local/bin/mas-* 2>/dev/null || true
-chmod 440 "$R"/etc/sudoers.d/mas-welcome 2>/dev/null || true
+chmod 440 "$R"/etc/sudoers.d/mas-welcome "$R"/etc/sudoers.d/10-mas-wheel 2>/dev/null || true
 # A freshly installed system asks "Add a password or not?" at the first login (mas-welcome)
 if [[ -n "$R" ]]; then
   mkdir -p "$R/var/lib/mas"
   : > "$R/var/lib/mas/firstrun-pending"
+fi
+
+if [[ -n "$R" ]]; then
+  # Fresh install only: the default account "mas" with NO password. It can create other accounts,
+  # and once you have another administrator account you can delete it (Start menu > Accounts).
+  # While it has no password it signs in by itself and can do administrator tasks.
+  # Setting a password for it (first-run screen) switches all of that off.
+  echo "==> Creating the default account 'mas' (no password)"
+  if ! in_root id -u mas >/dev/null 2>&1; then
+    in_root useradd -m -G wheel -s /bin/bash -c "MAS" mas
+    in_root passwd -d mas >/dev/null 2>&1 || true
+    mkdir -p "$R/var/lib/mas" "$R/etc/sddm.conf.d"
+    : > "$R/var/lib/mas/default-open"
+    printf 'mas ALL=(ALL:ALL) NOPASSWD: ALL\n' > "$R/etc/sudoers.d/mas-default-open"
+    chmod 440 "$R/etc/sudoers.d/mas-default-open"
+    sess=""
+    for s in plasma plasmawayland plasma-wayland; do
+      if [[ -f "$R/usr/share/wayland-sessions/$s.desktop" ]]; then sess="$s"; break; fi
+    done
+    {
+      echo "[Autologin]"
+      echo "User=mas"
+      if [[ -n "$sess" ]]; then echo "Session=$sess"; fi
+    } > "$R/etc/sddm.conf.d/mas-default-autologin.conf"
+  fi
 fi
 
 echo "==> Turning on services"

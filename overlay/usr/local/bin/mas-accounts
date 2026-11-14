@@ -1,0 +1,134 @@
+#!/usr/bin/env bash
+# mas-accounts - create and delete accounts. Works on Plasma and on XFCE.
+# You need to be an administrator. The default account "mas" (no password) is one.
+#
+# Typical use: log in as "mas", create your own administrator account, log out, log in as your new
+# account, and delete "mas" if you do not want it any more.
+PASSWD_FILE="${MAS_PASSWD:-/etc/passwd}"
+GROUP_FILE="${MAS_GROUP:-/etc/group}"
+SUDO="${MAS_SUDO:-sudo}"
+GATE="${MAS_GATE:-/var/lib/mas/default-open}"
+RECSTORE="${MAS_RECOVERY_STORE:-/var/lib/mas/recovery}"
+DEFAULT=mas
+TITLE="MAS accounts"
+me="$(id -un)"
+
+if ! command -v kdialog >/dev/null 2>&1; then
+  echo "mas-accounts needs kdialog. In a terminal you can use: sudo useradd -m -G wheel NAME ; sudo passwd NAME" >&2
+  exit 1
+fi
+
+say()   { kdialog --title "$TITLE" --msgbox "$1"; }
+sorry() { kdialog --title "$TITLE" --sorry "$1"; }
+
+normal_users() { awk -F: '$3>=1000 && $3<60000 {print $1}' "$PASSWD_FILE"; }
+
+is_admin() { # is the account in the group wheel?
+  awk -F: -v u="$1" '$1=="wheel"{n=split($4,a,","); for(i=1;i<=n;i++) if(a[i]==u) f=1} END{exit f?0:1}' "$GROUP_FILE"
+}
+
+logged_in() { loginctl list-sessions --no-legend 2>/dev/null | awk '{print $3}' | grep -qx "$1"; }
+
+get_admin() {
+  if $SUDO -n true 2>/dev/null; then return 0; fi
+  if ! is_admin "$me"; then
+    sorry "Only an administrator account can create or delete accounts."
+    return 1
+  fi
+  local pw
+  for _ in 1 2 3; do
+    pw="$(kdialog --title "$TITLE" --password "Password of $me (administrator):")" || return 1
+    if printf '%s\n' "$pw" | $SUDO -S -v 2>/dev/null; then return 0; fi
+    sorry "That password is not right."
+  done
+  return 1
+}
+
+create_account() {
+  local name p1 p2 admin
+  name="$(kdialog --title "$TITLE" --inputbox "Name for the new account (small letters and numbers, no spaces):")" || return 0
+  if [[ ! "$name" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]]; then
+    sorry "That name is not allowed. Start with a small letter and use only small letters, numbers, - and _."
+    return 0
+  fi
+  if grep -q "^$name:" "$PASSWD_FILE"; then
+    sorry "An account called '$name' already exists."
+    return 0
+  fi
+  kdialog --title "$TITLE" --yes-label "Administrator" --no-label "Standard" \
+    --yesno $'Should this account be an administrator?\n\nAn administrator can install software and create or delete accounts.\nA standard account cannot.'
+  admin=$?
+  if [[ $admin -gt 1 ]]; then return 0; fi
+  while true; do
+    p1="$(kdialog --title "$TITLE" --password "Password for '$name' (leave empty for no password):")" || return 0
+    if [[ -z "$p1" ]]; then
+      if kdialog --title "$TITLE" --yesno "Create '$name' with NO password?"; then break; else continue; fi
+    fi
+    p2="$(kdialog --title "$TITLE" --password "Type the same password again:")" || return 0
+    if [[ "$p1" == "$p2" ]]; then break; fi
+    sorry "The two passwords are different. Try again."
+  done
+  local args=(-m -s /bin/bash)
+  if [[ $admin -eq 0 ]]; then args+=(-G wheel); fi
+  if ! $SUDO useradd "${args[@]}" "$name"; then
+    sorry "Could not create the account."
+    return 0
+  fi
+  if [[ -n "$p1" ]]; then
+    printf '%s:%s\n' "$name" "$p1" | $SUDO chpasswd
+  else
+    $SUDO passwd -d "$name" >/dev/null
+  fi
+  say "The account '$name' is ready. Log out to sign in with it."
+}
+
+delete_account() {
+  local u target entries=() others=0 rc
+  for u in $(normal_users); do
+    if [[ "$u" == "$me" ]]; then continue; fi
+    if is_admin "$u"; then entries+=("$u" "$u (administrator)"); else entries+=("$u" "$u"); fi
+  done
+  if [[ ${#entries[@]} -eq 0 ]]; then
+    sorry "There is no other account to delete. You cannot delete the account you are using."
+    return 0
+  fi
+  target="$(kdialog --title "$TITLE" --menu "Which account do you want to delete?" "${entries[@]}")" || return 0
+  if logged_in "$target"; then
+    sorry "'$target' is signed in right now. Log that account out first."
+    return 0
+  fi
+  if is_admin "$target"; then
+    for u in $(normal_users); do
+      if [[ "$u" != "$target" ]] && is_admin "$u"; then others=$((others + 1)); fi
+    done
+    if [[ $others -eq 0 ]]; then
+      sorry "'$target' is the only administrator. Make another administrator account first."
+      return 0
+    fi
+  fi
+  kdialog --title "$TITLE" --yes-label "Delete account and files" --no-label "Delete account, keep files" --cancel-label "Cancel" \
+    --yesnocancel "Delete the account '$target'?"$'\n\n'"Its files (the home folder) can be deleted too. This cannot be undone."
+  rc=$?
+  case "$rc" in
+    0) $SUDO userdel -r "$target" ;;
+    1) $SUDO userdel "$target" ;;
+    *) return 0 ;;
+  esac
+  if [[ "$target" == "$DEFAULT" ]]; then
+    $SUDO rm -f "$GATE" /etc/sudoers.d/mas-default-open /etc/sddm.conf.d/mas-default-autologin.conf
+  fi
+  if $SUDO grep -q "\"user\": \"$target\"" "$RECSTORE" 2>/dev/null; then
+    $SUDO rm -f "$RECSTORE"
+  fi
+  say "The account '$target' was deleted."
+}
+
+get_admin || exit 1
+while true; do
+  choice="$(kdialog --title "$TITLE" --menu "What do you want to do?" create "Create a new account" delete "Delete an account")" || exit 0
+  case "$choice" in
+    create) create_account ;;
+    delete) delete_account ;;
+    *) exit 0 ;;
+  esac
+done
