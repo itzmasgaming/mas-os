@@ -1,0 +1,12 @@
+[Unit]
+Description=MAS: choose the login screen (MAS one, or the standard one if something is wrong)
+Before=sddm.service display-manager.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/mas-theme-check
+
+[Install]
+WantedBy=multi-user.target

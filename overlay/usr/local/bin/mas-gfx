@@ -18,6 +18,7 @@ ROOT="${MAS_ROOT:-}"
 CONF="$ROOT/etc/mas/gfx-mode"
 ENVD="$ROOT/etc/environment.d/90-mas-gfx.conf"
 PROF="$ROOT/etc/profile.d/mas-gfx.sh"
+GREETER="$ROOT/etc/sddm.conf.d/zz-mas-gfx.conf"
 CMDLINE="${MAS_CMDLINE:-/proc/cmdline}"
 
 valid() { case "$1" in normal|soft|basic|auto|xfce) return 0 ;; *) return 1 ;; esac; }
@@ -63,7 +64,17 @@ vars_for() { # prints NAME=value lines for a mode
 write_env() {
   local mode="$1" v
   mkdir -p "$(dirname "$ENVD")" "$(dirname "$PROF")"
-  rm -f "$ENVD" "$PROF"
+  rm -f "$ENVD" "$PROF" "$GREETER"
+  # The login screen itself (the SDDM greeter) also draws with the CPU in basic/soft mode, and in a
+  # virtual machine when XFCE is chosen. This line replaces the greeter line of mas-theme.conf, so it
+  # repeats QML_XHR_ALLOW_FILE_READ.
+  local soft_greeter=0
+  if [[ "$mode" == basic || "$mode" == soft ]]; then soft_greeter=1; fi
+  if [[ "$mode" == xfce ]] && systemd-detect-virt --vm --quiet 2>/dev/null; then soft_greeter=1; fi
+  if [[ $soft_greeter -eq 1 ]]; then
+    mkdir -p "$(dirname "$GREETER")"
+    printf '[General]\nGreeterEnvironment=QML_XHR_ALLOW_FILE_READ=1,QT_QUICK_BACKEND=software,LIBGL_ALWAYS_SOFTWARE=1\n' > "$GREETER"
+  fi
   if [[ "$mode" == normal || "$mode" == xfce ]]; then return; fi
   {
     echo "# written by mas-gfx (mode: $mode) - do not edit, use: mas-gfx normal|soft|basic|auto"

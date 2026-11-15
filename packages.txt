@@ -39,9 +39,6 @@ lib32-vulkan-icd-loader
 lib32-vulkan-radeon
 lib32-vulkan-intel
 
-# Boot logo (shown instead of the [ OK ] boot messages)
-plymouth
-
 # Fonts
 noto-fonts
 
@@ -75,6 +72,8 @@ snapper
 # Recovery key QR code
 qrencode
 
+# Administrator rights (mas-install, mas-accounts, mas-welcome and the sudoers files need it)
+sudo
 # Small utilities
 xdg-utils
 git

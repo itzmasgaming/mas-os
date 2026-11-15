@@ -1,0 +1,11 @@
+[Unit]
+Description=MAS: watch the login screen after it starts
+After=sddm.service
+
+[Service]
+# Type=simple: it keeps watching for a while but does not hold up the boot
+Type=simple
+ExecStart=/usr/local/bin/mas-theme-guard
+
+[Install]
+WantedBy=multi-user.target

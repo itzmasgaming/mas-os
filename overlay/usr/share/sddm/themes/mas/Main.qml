@@ -1,398 +1,391 @@
-// MAS OS login screen (SDDM theme).
-//  - Account without a password  -> one "Sign In" button, no password box.
-//  - Account with a password     -> password box. A wrong password shows "Loading..." and then
-//                                   "Wrong password" on this same screen (the screen never goes black).
-// Uses only basic QtQuick items (no Plasma / Controls / shader effects) so it also draws
-// correctly with software rendering inside virtual machines.
 import QtQuick 2.15
+
+// MAS login screen.
+//  - An account with no password shows a "Sign In" button instead of a password box.
+//  - Signing in shows "Loading...". A wrong password shows "Wrong password" after the loading.
+//  - Bottom left: choose the desktop session (for example the simple XFCE desktop).
+// Which accounts have no password is read from /var/lib/mas/passwordless (one name per line).
 
 Rectangle {
     id: root
     width: 1280
     height: 720
-    color: "#05060a"
+    color: "#05080f"
+    focus: true
 
-    readonly property string stateFile: "file:///var/lib/mas/blank-users"
-    readonly property color accent: "#ffffff"
-
-    // idle | loading | error | success
-    property string phase: "idle"
+    property string selectedUser: userModel.lastUser
+    property int sessionIndex: sessionModel.lastIndex
+    property bool passwordless: false
+    property bool busy: false
     property string message: ""
-    property string currentUser: (typeof userModel !== "undefined" && userModel.lastUser) ? userModel.lastUser : ""
-    property string currentReal: currentUser
-    property var blankList: []
-    property bool stateLoaded: false
-    property bool forcePassword: false     // set when a "no password" account turned out to need one
-    readonly property bool needsPassword: forcePassword || !isBlank(currentUser)
-    property real shake: 0
+    property bool sessionsOpen: false
 
-    function isBlank(name) {
-        return name !== "" && blankList.indexOf(name) >= 0
-    }
-
-    function parseList(text) {
-        var out = []
-        var lines = String(text).split("\n")
-        for (var i = 0; i < lines.length; i++) {
-            var n = lines[i].trim()
-            if (n.length > 0) out.push(n)
-        }
-        return out
-    }
-
-    function loadState() {
-        // fallback from theme.conf, replaced by the live file when it can be read
-        var fb = (typeof config !== "undefined" && config.blankUsers) ? String(config.blankUsers).split(",") : []
-        var cleaned = []
-        for (var i = 0; i < fb.length; i++) if (fb[i].trim() !== "") cleaned.push(fb[i].trim())
-        blankList = cleaned
-        try {
-            var xhr = new XMLHttpRequest()
-            xhr.onreadystatechange = function() {
-                if (xhr.readyState === XMLHttpRequest.DONE) {
-                    if (xhr.responseText !== undefined && xhr.responseText !== null && (xhr.status === 0 || xhr.status === 200))
-                        blankList = parseList(xhr.responseText)
-                    stateLoaded = true
-                    focusInput()
+    // ---------------------------------------------------------------- logic
+    function checkPasswordless() {
+        var xhr = new XMLHttpRequest()
+        xhr.open("GET", "file:///var/lib/mas/passwordless")
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                var list = (xhr.responseText || "").split("\n")
+                var found = false
+                for (var i = 0; i < list.length; i++) {
+                    if (list[i].trim() === root.selectedUser) {
+                        found = true
+                    }
                 }
+                root.passwordless = found
             }
-            xhr.open("GET", stateFile)
-            xhr.send()
-        } catch (e) {
-            stateLoaded = true
         }
+        xhr.send()
     }
 
-    function focusInput() {
-        if (needsPassword && phase !== "loading") passwordInput.forceActiveFocus()
-        else signInButton.forceActiveFocus()
-    }
-
-    function attempt() {
-        if (phase === "loading" || phase === "success") return
-        var pw = needsPassword ? passwordInput.text : ""
-        if (needsPassword && pw.length === 0) {
-            phase = "error"
-            message = "Type your password"
+    function doLogin() {
+        if (root.busy || root.selectedUser === "") {
             return
         }
-        message = "Loading..."
-        phase = "loading"
-        // let the "Loading..." screen paint before PAM starts working
-        startLogin.pw = pw
-        startLogin.start()
+        root.message = ""
+        root.busy = true
+        var si = root.sessionIndex >= 0 ? root.sessionIndex : 0
+        sddm.login(root.selectedUser, root.passwordless ? "" : pwField.text, si)
     }
 
-    Timer {
-        id: startLogin
-        interval: 60
-        property string pw: ""
-        onTriggered: sddm.login(root.currentUser, pw, sessionModel.lastIndex)
+    onSelectedUserChanged: checkPasswordless()
+
+    Component.onCompleted: {
+        checkPasswordless()
+        if (!root.passwordless) {
+            pwField.forceActiveFocus()
+        }
     }
+
+    Keys.onReturnPressed: root.doLogin()
+    Keys.onEnterPressed: root.doLogin()
 
     Connections {
         target: sddm
         function onLoginFailed() {
-            // keep "Loading..." visible for a moment so it never looks like a flash
             failTimer.start()
         }
         function onLoginSucceeded() {
-            failTimer.stop()
-            root.message = "Welcome"
-            root.phase = "success"
+            root.message = ""
+        }
+    }
+
+    // Shows "Loading..." for a moment before telling you the password was wrong
+    Timer {
+        id: failTimer
+        interval: 700
+        repeat: false
+        onTriggered: {
+            root.busy = false
+            pwField.text = ""
+            if (root.passwordless) {
+                // the list was out of date: this account does have a password
+                root.passwordless = false
+                root.message = "This account needs a password."
+            } else {
+                root.message = "Wrong password. Try again."
+            }
+            pwField.forceActiveFocus()
+        }
+    }
+
+    // ---------------------------------------------------------------- look
+    Image {
+        anchors.fill: parent
+        source: config.background ? config.background : "file:///usr/share/mas/wallpaper-dark.jpg"
+        fillMode: Image.PreserveAspectCrop
+    }
+
+    Rectangle {
+        anchors.fill: parent
+        color: "#66000000"
+    }
+
+    // Clock
+    Column {
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: parent.height * 0.09
+        spacing: 4
+
+        Text {
+            id: timeText
+            anchors.horizontalCenter: parent.horizontalCenter
+            color: "#ffffff"
+            font.pixelSize: 88
+            font.weight: Font.Light
+            text: Qt.formatTime(new Date(), "hh:mm")
+        }
+        Text {
+            id: dateText
+            anchors.horizontalCenter: parent.horizontalCenter
+            color: "#d5dcec"
+            font.pixelSize: 22
+            text: Qt.formatDate(new Date(), "dddd, d MMMM yyyy")
         }
     }
 
     Timer {
-        id: failTimer
-        interval: 350
+        interval: 1000
+        running: true
+        repeat: true
         onTriggered: {
-            passwordInput.text = ""
-            if (!root.needsPassword) {
-                // the account was listed as "no password" but really has one
-                root.forcePassword = true
-                root.message = "This account needs a password"
-            } else {
-                root.message = "Wrong password"
-            }
-            root.phase = "error"
-            shakeAnim.restart()
-            root.focusInput()
+            timeText.text = Qt.formatTime(new Date(), "hh:mm")
+            dateText.text = Qt.formatDate(new Date(), "dddd, d MMMM yyyy")
         }
     }
 
-    Component.onCompleted: {
-        loadState()
-        focusInput()
-    }
-
-    // ---------------------------------------------------------------- background
-    Image {
-        anchors.fill: parent
-        source: (typeof config !== "undefined" && config.background) ? config.background : "background.jpg"
-        fillMode: Image.PreserveAspectCrop
-        asynchronous: true
-        smooth: true
-    }
-    Rectangle { anchors.fill: parent; color: "#000000"; opacity: 0.45 }
-
-    // ---------------------------------------------------------------- centre card
-    Item {
-        id: card
-        width: 360
-        height: 300
+    // Sign-in block
+    Column {
+        id: block
+        width: 320
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.verticalCenter: parent.verticalCenter
-        anchors.verticalCenterOffset: Math.round(parent.height * 0.2)
+        anchors.verticalCenterOffset: 80
+        spacing: 14
 
-        transform: Translate { x: root.shake }
-
-        SequentialAnimation {
-            id: shakeAnim
-            NumberAnimation { target: root; property: "shake"; to: -14; duration: 55 }
-            NumberAnimation { target: root; property: "shake"; to: 14; duration: 90 }
-            NumberAnimation { target: root; property: "shake"; to: -9; duration: 80 }
-            NumberAnimation { target: root; property: "shake"; to: 6; duration: 70 }
-            NumberAnimation { target: root; property: "shake"; to: 0; duration: 60 }
-        }
-
-        // dark panel so the text is easy to read on top of the wallpaper
         Rectangle {
-            anchors.fill: parent
-            radius: 16
-            color: "#b3080a10"
-            border.width: 1
-            border.color: "#26ffffff"
-        }
-
-        // round avatar with the first letter of the account name
-        Rectangle {
-            id: avatar
-            width: 84; height: 84; radius: 42
+            width: 112
+            height: 112
+            radius: 56
             anchors.horizontalCenter: parent.horizontalCenter
-            y: 24
-            color: "#2effffff"
+            color: "#1b2a44"
+            border.color: "#7fa7ff"
             border.width: 2
-            border.color: "#80ffffff"
-            Text {
+
+            Image {
                 anchors.centerIn: parent
-                text: root.currentReal.length > 0 ? root.currentReal.charAt(0).toUpperCase() : "?"
-                color: "#ffffff"
-                font.pixelSize: 40
-                font.weight: Font.DemiBold
+                width: 68
+                height: 68
+                source: "file:///usr/share/mas/mas-logo-white.png"
+                fillMode: Image.PreserveAspectFit
             }
         }
 
-        // user name
-        Text {
-            id: userName
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: 120
-            text: root.currentReal
-            color: "#ffffff"
-            font.pixelSize: 26
-            font.weight: Font.DemiBold
-        }
-
-        // ---- password box (accounts that have a password)
-        Rectangle {
-            id: pwBox
-            visible: root.needsPassword && root.phase !== "loading" && root.phase !== "success"
-            width: 280
-            height: 44
-            radius: 6
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: 176
-            color: "#26ffffff"
-            border.width: 1
-            border.color: root.phase === "error" ? "#ff6b6b" : (passwordInput.activeFocus ? "#ffffff" : "#66ffffff")
-
-            TextInput {
-                id: passwordInput
-                objectName: "passwordInput"
-                anchors.left: parent.left
-                anchors.right: goBtn.left
-                anchors.leftMargin: 14
-                anchors.rightMargin: 6
-                anchors.verticalCenter: parent.verticalCenter
-                echoMode: TextInput.Password
-                passwordCharacter: "\u2022"
-                color: "#ffffff"
-                selectionColor: "#80ffffff"
-                font.pixelSize: 18
-                clip: true
-                focus: true
-                onAccepted: root.attempt()
-                onTextChanged: if (root.phase === "error") { root.phase = "idle"; root.message = "" }
-                Text {
-                    visible: passwordInput.text.length === 0
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: "Password"
-                    color: "#99ffffff"
-                    font.pixelSize: 18
-                }
-            }
-            Rectangle {
-                id: goBtn
-                width: 34; height: 34; radius: 5
-                anchors.right: parent.right
-                anchors.rightMargin: 5
-                anchors.verticalCenter: parent.verticalCenter
-                color: goArea.pressed ? "#55ffffff" : "#33ffffff"
-                Text { anchors.centerIn: parent; text: "\u279C"; color: "#ffffff"; font.pixelSize: 18 }
-                MouseArea { id: goArea; anchors.fill: parent; onClicked: root.attempt() }
-            }
-        }
-
-        // ---- Sign In button (accounts without a password)
-        Rectangle {
-            id: signInButton
-            visible: !root.needsPassword && root.phase !== "loading" && root.phase !== "success"
-            width: 200
-            height: 46
-            radius: 6
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: 176
-            color: signArea.pressed ? "#dddddd" : (signArea.containsMouse || signInButton.activeFocus ? "#ffffff" : "#f0f0f0")
-            border.width: signInButton.activeFocus ? 2 : 0
-            border.color: "#80c0ff"
-            activeFocusOnTab: true
-            Keys.onReturnPressed: root.attempt()
-            Keys.onEnterPressed: root.attempt()
-            Keys.onSpacePressed: root.attempt()
-            Text {
-                anchors.centerIn: parent
-                text: "Sign In"
-                color: "#101216"
-                font.pixelSize: 18
-                font.weight: Font.DemiBold
-            }
-            MouseArea {
-                id: signArea
-                anchors.fill: parent
-                hoverEnabled: true
-                onClicked: root.attempt()
-            }
-        }
-
-        // ---- Loading spinner + text
-        Item {
-            id: loadingBox
-            visible: root.phase === "loading" || root.phase === "success"
-            width: 280
-            height: 60
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: 172
-
-            Item {
-                id: spinner
-                width: 28; height: 28
+        // Name of the chosen account
+        Repeater {
+            model: userModel
+            delegate: Text {
+                visible: model.name === root.selectedUser
+                height: visible ? implicitHeight : 0
                 anchors.horizontalCenter: parent.horizontalCenter
-                y: 0
-                RotationAnimator on rotation { from: 0; to: 360; duration: 900; loops: Animation.Infinite; running: loadingBox.visible }
-                Repeater {
-                    model: 8
-                    Rectangle {
-                        width: 5; height: 5; radius: 2.5
-                        color: "#ffffff"
-                        opacity: 0.15 + (index / 8) * 0.85
-                        x: 14 + 11 * Math.sin(index * Math.PI / 4) - 2.5
-                        y: 14 - 11 * Math.cos(index * Math.PI / 4) - 2.5
-                    }
-                }
+                color: "#ffffff"
+                font.pixelSize: 22
+                text: (model.realName && model.realName !== "") ? model.realName : model.name
             }
         }
 
-        // ---- status line: Loading... / Wrong password
-        Text {
-            id: status
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: root.phase === "loading" || root.phase === "success" ? 210 : 236
-            width: 300
-            horizontalAlignment: Text.AlignHCenter
-            text: root.message
-            visible: root.message !== ""
-            color: root.phase === "error" ? "#ff7b7b" : "#ffffff"
-            font.pixelSize: 17
-            wrapMode: Text.WordWrap
-        }
-
-        // ---- small hint after a wrong password
-        Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            y: 262
-            width: 320
-            horizontalAlignment: Text.AlignHCenter
-            visible: root.phase === "error" && root.needsPassword && root.message === "Wrong password"
-            text: "Forgot it? Restart, press E in the boot menu, add  mas.recovery  and start."
-            color: "#99ffffff"
-            font.pixelSize: 12
-            wrapMode: Text.WordWrap
-        }
-
-        // ---- other accounts
+        // Other accounts (only when there is more than one)
         Row {
-            visible: typeof userModel !== "undefined" && userModel.count > 1 && root.phase !== "loading" && root.phase !== "success"
             anchors.horizontalCenter: parent.horizontalCenter
-            y: 316
-            spacing: 14
+            spacing: 8
+            visible: userModel.count > 1
+
             Repeater {
-                model: (typeof userModel !== "undefined") ? userModel : null
-                Rectangle {
-                    width: 86; height: 30; radius: 15
-                    color: model.name === root.currentUser ? "#40ffffff" : "#1affffff"
-                    Text { anchors.centerIn: parent; text: model.realName && model.realName.length ? model.realName : model.name; color: "#ffffff"; font.pixelSize: 14; elide: Text.ElideRight; width: parent.width - 12; horizontalAlignment: Text.AlignHCenter }
+                model: userModel
+                delegate: Rectangle {
+                    height: 28
+                    width: chipText.implicitWidth + 22
+                    radius: 14
+                    color: model.name === root.selectedUser ? "#4a7bff" : "#44ffffff"
+
+                    Text {
+                        id: chipText
+                        anchors.centerIn: parent
+                        color: "#ffffff"
+                        font.pixelSize: 13
+                        text: model.name
+                    }
                     MouseArea {
                         anchors.fill: parent
                         onClicked: {
-                            root.currentUser = model.name
-                            root.currentReal = model.realName && model.realName.length ? model.realName : model.name
-                            root.forcePassword = false
-                            root.phase = "idle"; root.message = ""
-                            passwordInput.text = ""
-                            root.focusInput()
+                            root.message = ""
+                            root.selectedUser = model.name
                         }
                     }
                 }
             }
         }
+
+        // Password box: hidden for accounts that have no password
+        Rectangle {
+            visible: !root.passwordless
+            width: parent.width
+            height: 44
+            radius: 8
+            color: "#eef2fb"
+            border.color: "#7fa7ff"
+            border.width: 1
+
+            TextInput {
+                id: pwField
+                anchors.fill: parent
+                anchors.margins: 12
+                verticalAlignment: TextInput.AlignVCenter
+                echoMode: TextInput.Password
+                passwordCharacter: "•"
+                font.pixelSize: 18
+                color: "#101828"
+                clip: true
+                enabled: !root.busy
+                Keys.onReturnPressed: root.doLogin()
+                Keys.onEnterPressed: root.doLogin()
+            }
+            Text {
+                visible: pwField.text === ""
+                anchors.verticalCenter: parent.verticalCenter
+                x: 12
+                color: "#7a8497"
+                font.pixelSize: 18
+                text: "Password"
+            }
+        }
+
+        // Sign In button
+        Rectangle {
+            width: parent.width
+            height: 44
+            radius: 8
+            color: root.busy ? "#34548f" : (signArea.containsMouse ? "#5b8cff" : "#4a7bff")
+
+            Text {
+                id: signText
+                anchors.centerIn: parent
+                color: "#ffffff"
+                font.pixelSize: 18
+                font.weight: Font.DemiBold
+                text: root.busy ? "Loading..." : "Sign In"
+                // The pulse is its own value, so "Sign In" is always fully bright when it is not busy
+                property real pulse: 1.0
+                opacity: root.busy ? pulse : 1.0
+
+                SequentialAnimation {
+                    running: root.busy
+                    loops: Animation.Infinite
+                    NumberAnimation { target: signText; property: "pulse"; to: 0.45; duration: 450 }
+                    NumberAnimation { target: signText; property: "pulse"; to: 1.0; duration: 450 }
+                }
+            }
+            MouseArea {
+                id: signArea
+                anchors.fill: parent
+                hoverEnabled: true
+                onClicked: root.doLogin()
+            }
+        }
+
+        // Error message
+        Text {
+            anchors.horizontalCenter: parent.horizontalCenter
+            visible: root.message !== "" && !root.busy
+            color: "#ff8f8f"
+            font.pixelSize: 16
+            text: root.message
+        }
     }
 
-    // ---------------------------------------------------------------- power buttons
+    // Bottom left: desktop session
+    Rectangle {
+        id: sessionButton
+        x: 24
+        y: root.height - 58
+        height: 34
+        width: sessionRow.implicitWidth + 28
+        radius: 6
+        color: "#44000000"
+
+        Row {
+            id: sessionRow
+            anchors.centerIn: parent
+            spacing: 6
+
+            Text {
+                color: "#c8d2e6"
+                font.pixelSize: 14
+                text: "Desktop Session:"
+            }
+            Repeater {
+                model: sessionModel
+                delegate: Text {
+                    visible: index === root.sessionIndex
+                    width: visible ? implicitWidth : 0
+                    color: "#ffffff"
+                    font.pixelSize: 14
+                    text: model.name
+                }
+            }
+        }
+        MouseArea {
+            anchors.fill: parent
+            onClicked: root.sessionsOpen = !root.sessionsOpen
+        }
+    }
+
+    Column {
+        visible: root.sessionsOpen
+        x: 24
+        y: sessionButton.y - height - 6
+        spacing: 2
+
+        Repeater {
+            model: sessionModel
+            delegate: Rectangle {
+                width: 280
+                height: 34
+                radius: 6
+                color: index === root.sessionIndex ? "#4a7bff" : "#e6101828"
+
+                Text {
+                    anchors.verticalCenter: parent.verticalCenter
+                    x: 12
+                    color: "#ffffff"
+                    font.pixelSize: 14
+                    text: model.name
+                }
+                MouseArea {
+                    anchors.fill: parent
+                    onClicked: {
+                        root.sessionIndex = index
+                        root.sessionsOpen = false
+                    }
+                }
+            }
+        }
+    }
+
+    // Bottom right: power
     Row {
         anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.margins: 24
-        spacing: 12
-        visible: root.phase !== "loading" && root.phase !== "success"
+        anchors.rightMargin: 24
+        y: root.height - 58
+        spacing: 10
+
         Rectangle {
-            visible: typeof sddm !== "undefined" && sddm.canReboot
-            width: 96; height: 34; radius: 6; color: rbArea.pressed ? "#55ffffff" : "#26ffffff"
-            Text { anchors.centerIn: parent; text: "Restart"; color: "#ffffff"; font.pixelSize: 14 }
-            MouseArea { id: rbArea; anchors.fill: parent; onClicked: sddm.reboot() }
+            visible: sddm.canSuspend
+            height: 34
+            width: sleepText.implicitWidth + 24
+            radius: 6
+            color: "#44000000"
+            Text { id: sleepText; anchors.centerIn: parent; color: "#ffffff"; font.pixelSize: 14; text: "Sleep" }
+            MouseArea { anchors.fill: parent; onClicked: sddm.suspend() }
         }
         Rectangle {
-            visible: typeof sddm !== "undefined" && sddm.canPowerOff
-            width: 96; height: 34; radius: 6; color: poArea.pressed ? "#55ffffff" : "#26ffffff"
-            Text { anchors.centerIn: parent; text: "Shut down"; color: "#ffffff"; font.pixelSize: 14 }
-            MouseArea { id: poArea; anchors.fill: parent; onClicked: sddm.powerOff() }
+            visible: sddm.canReboot
+            height: 34
+            width: restartText.implicitWidth + 24
+            radius: 6
+            color: "#44000000"
+            Text { id: restartText; anchors.centerIn: parent; color: "#ffffff"; font.pixelSize: 14; text: "Restart" }
+            MouseArea { anchors.fill: parent; onClicked: sddm.reboot() }
         }
-    }
-
-    // clock, bottom left
-    Text {
-        anchors.left: parent.left
-        anchors.bottom: parent.bottom
-        anchors.margins: 28
-        color: "#ccffffff"
-        font.pixelSize: 16
-        text: Qt.formatDateTime(new Date(), "dddd, d MMMM  hh:mm")
-        Timer { interval: 20000; running: true; repeat: true; onTriggered: parent.text = Qt.formatDateTime(new Date(), "dddd, d MMMM  hh:mm") }
-    }
-
-    MouseArea {
-        anchors.fill: parent
-        z: -1
-        onClicked: root.focusInput()
+        Rectangle {
+            visible: sddm.canPowerOff
+            height: 34
+            width: offText.implicitWidth + 24
+            radius: 6
+            color: "#44000000"
+            Text { id: offText; anchors.centerIn: parent; color: "#ffffff"; font.pixelSize: 14; text: "Shut Down" }
+            MouseArea { anchors.fill: parent; onClicked: sddm.powerOff() }
+        }
     }
 }

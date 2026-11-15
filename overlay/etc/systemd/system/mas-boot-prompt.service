@@ -2,9 +2,6 @@
 Description=MAS: offer to reset a forgotten password (installed system only)
 ConditionPathExists=/var/lib/mas/recovery
 ConditionPathExists=!/etc/sddm.conf.d/autologin.conf
-# Same rule as mas-gfx-ask: no text screen on top of the boot logo unless you add  mas.recovery  to the boot line.
-ConditionKernelCommandLine=|!splash
-ConditionKernelCommandLine=|mas.recovery
 Before=sddm.service display-manager.service
 After=local-fs.target
 
@@ -16,9 +13,6 @@ StandardInput=tty-force
 StandardOutput=tty
 StandardError=tty
 TTYPath=/dev/tty1
-TTYReset=yes
-TTYVHangup=yes
-TTYVTDisallocate=yes
 ExecStart=/usr/local/bin/mas-boot-prompt
 
 [Install]

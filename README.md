@@ -3,9 +3,6 @@
 This folder turns into the **MAS OS ISO** (a disk image you can start in a virtual machine or from a USB stick).
 It builds MAS on top of Arch Linux with a KDE Plasma desktop that is restyled with your logo.
 
-> **Changed in this version:** new login screen (Sign In button, Loading / Wrong password), boot logo (Plymouth) instead of `[ OK ]` lines.
-> The boot logo and the login screen could not be tried on a real boot here. The login screen was drawn and clicked through with a test harness; the boot logo script could not be shown.
->
 > **Status: untested.** This kit was written without being able to run a build or boot the result.
 > The first build may stop with an error. If it does, send the error text and it will be fixed.
 
@@ -16,22 +13,21 @@ It builds MAS on top of Arch Linux with a KDE Plasma desktop that is restyled wi
 | Linux base, fast, no preinstalled apps | Arch Linux + a minimal KDE Plasma. Only a file manager (Dolphin), terminal (Konsole), archive tool (Ark) and Settings are included |
 | `.exe` / `.msi` apps and games | **Wine** (double-click a `.exe`) |
 | `.zip` `.rar` `.7z` | Ark, unzip, unrar, 7zip |
-| `.apk` Android apps and games | **Waydroid** (double-click an `.apk`; Android is downloaded, about 1 GB, the first time) |
 | "Ubuntu LTS" icon opens a small command window | `Ubuntu LTS` launcher: a 100x28 terminal running an Ubuntu container (Distrobox). First open downloads Ubuntu |
 | Brave included | `Brave` launcher installs Brave from Flathub the first time you open it (needs internet) and makes it the default browser |
 | Protected, no one can connect in | `nftables` firewall: all incoming connections are blocked, replies to your own connections are allowed |
 | Dot in the top-right when something connects | **MAS Shield** (`mas-shield`): an amber dot appears in the top-right corner while something is connected in, plus a notification |
 | Windows-style right-click menus, window buttons, light/dark mode | Built into KDE Plasma. Light/dark: Settings > Colors & Themes. The MAS wallpaper switches with it |
 | Logo as default background | `MAS` wallpaper (dark and light versions), also on the login screen and the start button |
-| Sandbox VM that resets when closed | `Sandbox` launcher: a throw-away QEMU virtual machine. Put an `.iso`, `.qcow2` or `.img` in `~/Sandbox` first |
-| Restore points | Btrfs + Snapper. A snapshot is taken before every update (installed system only) |
+| Sandbox VM that resets when closed | `Sandbox` launcher: a throw-away QEMU virtual machine. Put an `.iso`, `.qcow2` or `.img` in `~/Sandbox` first. It asks if the Sandbox may use the internet. With internet on, the guest can also reach programs that listen on this computer (a QEMU limit); choose **No internet** for anything you do not trust |
+| Restore points | Btrfs + Snapper. `mas-apply` creates the Snapper config for `/` itself (when the install uses Btrfs), and a snapshot is taken before every update. **Only if you chose Btrfs in archinstall**; on any other file system restore points are OFF and the installer prints a note |
 | First-time screen: add a password or not | `mas-welcome`: a window at the first login with **Add password / No password / Ask me later**. It also appears in the live session (every time you start the ISO) so you can see it. Live passwords are empty: just press Enter. The live session never locks itself |
-| Default account with no password | The account **mas** has no password, in the live session and on an installed MAS. You are never asked for an administrator password while you use it. It signs in by itself on an installed MAS. When you press **Add password** in the welcome window, all of that switches off and the account is protected like any other |
+| Default account with no password | The account **mas** has no password, in the live session and on an installed MAS. You are never asked for an administrator password while you use it. It signs in by itself on an installed MAS. If you ever see the login screen, leave the password box empty or type anything and press Enter: **mas** is let in (this works only while it has no password). The login screen also has **Desktop Session** at the bottom left, where you can choose the simple XFCE desktop. When you press **Add password** in the welcome window, all of that switches off and the account is protected like any other |
 | Create and delete accounts | Start menu > **Accounts (create or delete)**. Log in as **mas**, create your own administrator account, log out, log in as your new account, and delete **mas** if you do not want it. It refuses to delete an account that is signed in, or the last administrator |
 | The password is also the root password | When you press **Add password**, MAS sets that same password for your account and for `root`. **No password** clears both |
-| Recovery key (forgot password) | After you add a password, a window shows a **recovery key** and a **QR code** (scan it with your phone to save a copy). On an installed MAS, restart, press **E** in the boot menu, add `mas.recovery` to the end of the `linux` line and start (Ctrl+X in GRUB). A "Forgot your password?" prompt then shows before the login screen: press **R** within 3 seconds, type the key, and choose a new password. (This is not shown on every boot any more, so it does not cover the boot logo.) The old key then stops working and you get a new one. In the live session use Start menu > **Reset password (recovery key)**. A camera can scan the QR code if the computer has one. Make a new key any time: `sudo mas-recovery new` |
-| Login screen: **Sign In** button | MAS has its own login screen (SDDM theme `mas`). An account with **no password** shows a single **Sign In** button, no password box. An account **with** a password shows a password box. A wrong password shows **Loading...** and then a red **Wrong password** on the same screen (the screen does not go black). The list of accounts without a password is kept in `/var/lib/mas/blank-users` by `mas-loginstate`, which updates itself whenever a password or account changes |
-| Boot logo instead of `[ OK ]` lines | **Plymouth** with the `mas` theme: black screen, your logo in the middle and a spinning ring of dots, like Windows. The boot lines are hidden with `quiet splash` on the boot line (already added to every boot menu entry) |
+| Recovery key (forgot password) | After you add a password, a window shows a **recovery key** and a **QR code** (scan it with your phone to save a copy). On an installed MAS, press **R** within 3 seconds at the "Forgot your password?" message that shows before the login screen, type the key, and choose a new password. The old key then stops working and you get a new one. The recovery key is typed at the start-up screen, so it works even though the boot logo is showing. If the key press is not noticed, edit the boot entry and add `mas.recovery` to the boot options: it goes straight to the reset. The live session has its own entry (Start menu > **Reset live-session password**) which only affects the live session, not an installed MAS. A camera can scan the QR code if the computer has one. Make a new key any time: `sudo mas-recovery new` |
+| MAS login screen | A custom login screen (theme `mas`). An account **without a password** shows a **Sign In** button instead of a password box. An account **with a password** shows the box. A wrong password shows **Loading...** and then **Wrong password. Try again.** and stays on the login screen (it does not go black). The list of accounts without a password is `/var/lib/mas/passwordless`; it is kept up to date by the welcome window and the Accounts tool. Safety net: if the theme looks broken, MAS switches to the standard login screen by itself (`journalctl -t mas-theme` says why). Boot option `mas.classic` forces the standard one |
+| Boot logo | The MAS logo (slowly pulsing) is shown while the computer starts, instead of the `[ OK ]` lines (Plymouth). It is in the live ISO and added to the installed system by `mas-apply`. To see the text again, press **Esc** during boot, or add `plymouth.enable=0` to the boot options. If the `plymouth` package is not found when building, MAS simply builds without the logo |
 | Install it on a disk | `Install MAS` icon on the live desktop |
 
 ## Step 1 - Build the ISO
@@ -75,11 +71,11 @@ It installs Docker if needed, builds the ISO in a temporary Arch container, and 
 
 Inside a virtual machine MAS switches to "safe drawing" on its own (`mas-gfx`), so the desktop is slower and has fewer visual effects than on a real computer. On a real computer it uses the graphics card as normal.
 
-Android apps (Waydroid) and heavy games need real hardware or a GPU. Expect them not to work inside VirtualBox.
+Heavy games need real hardware or a GPU. Expect them not to work inside VirtualBox.
 
 ### Black screen with only a mouse cursor?
 
-The boot logo replaces the old text menu, so **MAS no longer asks how the desktop should start**; it uses *Automatic* (safe CPU drawing inside a virtual machine). To get the menu back, press **e** (UEFI) or **Tab** (BIOS) at the boot menu and add `mas.menu` to the end of the line. The menu is **How should the desktop start?**
+After the first boot menu, MAS shows its own menu on a text screen: **How should the desktop start?**
 
 - **1** Automatic (nothing pressed for 12 seconds also means 1)
 - **2** Safe: Plasma drawn by the CPU. Try this if the screen goes black.
@@ -100,13 +96,6 @@ To skip that menu or set the mode by hand:
 3. Still black? Press **Right Ctrl + F3** to get a text console, log in as `mas` (no password) and run `mas-debug`. Send a screenshot of what it prints.
 
 On a text console you can also change the mode for good with `sudo mas-gfx basic` (or `soft`, `normal`, `auto`) followed by `sudo systemctl restart sddm`.
-
-### Boot logo and login screen
-
-- Do not want the logo? At the boot menu press **e** / **Tab** and remove `quiet splash`: you see the normal boot messages and the text menu again.
-- The logo is in `overlay/usr/share/plymouth/themes/mas/` (`logo.png`, `mas.script`). Change `logo.png` to change it.
-- The login screen is in `overlay/usr/share/sddm/themes/mas/Main.qml`. It draws with the CPU (`QT_QUICK_BACKEND=software`, set in `overlay/etc/sddm.conf.d/zz-mas-theme.conf`) so it works in every virtual machine.
-- If a wrong password still gives a black screen, press Right Ctrl + F3, log in on the text console and send the output of `journalctl -b -u sddm --no-pager | tail -50`.
 
 ## Step 3 - Install it on a disk
 

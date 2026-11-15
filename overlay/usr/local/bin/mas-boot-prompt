@@ -1,12 +1,37 @@
 #!/usr/bin/env bash
 # mas-boot-prompt - installed MAS only: for 3 seconds before the login screen, offers to reset a
 # forgotten password with the recovery key. Press R. Any other key (or nothing) continues the boot.
-if command -v plymouth >/dev/null 2>&1 && plymouth --ping >/dev/null 2>&1; then plymouth quit >/dev/null 2>&1 || true; fi
+# Also: the boot option  mas.recovery  goes straight to the reset (edit the boot entry to add it).
+CMDLINE="${MAS_CMDLINE:-/proc/cmdline}"
+RECOVERY="${MAS_RECOVERY_TOOL:-/usr/local/bin/mas-recovery}"
+FLAG="${MAS_RESET_FLAG:-/run/mas-boot-reset}"
+rm -f "$FLAG"
+
+do_reset() {
+  if command -v plymouth >/dev/null 2>&1; then plymouth quit 2>/dev/null || true; fi
+  "$RECOVERY" reset
+  sleep 2
+}
+
+if grep -qw 'mas.recovery' "$CMDLINE" 2>/dev/null; then do_reset; exit 0; fi
+
+MSG="Forgot your password?  Press R within 3 seconds to reset it with your recovery key."
+
+if command -v plymouth >/dev/null 2>&1 && plymouth --ping 2>/dev/null; then
+  # The boot logo owns the keyboard, so ask it for the keystroke instead of reading the console
+  plymouth display-message --text="$MSG" 2>/dev/null || true
+  ans="$(timeout 3 plymouth watch-keystroke --keys=rR --command="touch $FLAG" 2>/dev/null)" || true
+  plymouth hide-message --text="$MSG" 2>/dev/null || true
+  if [[ -e "$FLAG" || "$ans" == [rR]* ]]; then do_reset; fi
+  rm -f "$FLAG"
+  exit 0
+fi
+
 clear 2>/dev/null || true
-printf '\n   MAS OS\n\n   Forgot your password?  Press R within 3 seconds to reset it with your recovery key.\n\n'
+printf '\n   MAS OS\n\n   %s\n\n' "$MSG"
 key=""
 read -rsn1 -t 3 key || key=""
 case "$key" in
-  r|R) /usr/local/bin/mas-recovery reset; sleep 2 ;;
+  r|R) do_reset ;;
 esac
 exit 0

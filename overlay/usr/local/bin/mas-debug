@@ -15,9 +15,15 @@ brief() {
   echo "running: $(ps -eo comm= 2>/dev/null | grep -E '^(kwin_wayland|plasmashell|sddm-greeter|Xorg|startplasma-way|sddm-helper)' | sort -u | tr '\n' ' ')"
   echo "dri: $(ls /dev/dri 2>/dev/null | tr '\n' ' ')"
   echo "--- sddm ---"
-  journalctl -b -u sddm --no-pager -o cat 2>/dev/null | tail -n 6 | cut -c1-78
+  journalctl -b -u sddm --no-pager -o cat 2>/dev/null | tail -n 4 | cut -c1-78
+  # The desktop writes its own start-up messages here (the newest log of any account)
+  sl="$(ls -t /home/*/.local/share/sddm/wayland-session.log /home/*/.local/share/sddm/xorg-session.log 2>/dev/null | head -n1)"
+  if [[ -n "$sl" ]]; then
+    echo "--- $(basename "$sl") ($(echo "$sl" | cut -d/ -f3)) ---"
+    tail -n 7 "$sl" | cut -c1-78
+  fi
   echo "--- errors ---"
-  journalctl -b --no-pager -o cat 2>/dev/null | grep -iE 'kwin|plasma|startplasma|vmwgfx|drm|egl|gbm|qml' | grep -iE 'fail|error|crash|abort|cannot|unable|segfault|dump|not found' | tail -n 8 | cut -c1-78
+  journalctl -b --no-pager -o cat 2>/dev/null | grep -iE 'kwin|plasma|startplasma|xfce|vmwgfx|drm|egl|gbm|qml' | grep -iE 'fail|error|crash|abort|cannot|unable|segfault|dump|not found' | tail -n 5 | cut -c1-78
 }
 
 full() {
@@ -33,8 +39,15 @@ full() {
   echo "== graphics devices =="
   lspci 2>/dev/null | grep -iE 'vga|3d|display' || true
   echo
+  echo "== desktop start-up logs (last 40 lines each) =="
+  for f in /home/*/.local/share/sddm/wayland-session.log /home/*/.local/share/sddm/xorg-session.log; do
+    if [[ -f "$f" ]]; then echo "-- $f"; tail -n 40 "$f"; fi
+  done
+  echo
   echo "== sddm log (last 40) =="
   journalctl -b -u sddm --no-pager 2>/dev/null | tail -n 40
+  echo '--- login theme ---'
+  journalctl -b -t mas-theme --no-pager -o cat 2>/dev/null | tail -n 10
   echo
   echo "== desktop log, errors only (last 60) =="
   journalctl -b --no-pager 2>/dev/null | grep -iE 'kwin|plasmashell|startplasma|drm|vmwgfx|egl|gbm' | grep -iE 'fail|error|crash|abort|cannot|unable|segfault|core dump' | tail -n 60

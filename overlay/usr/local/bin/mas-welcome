@@ -38,10 +38,16 @@ case "$choice" in
       fi
       if key="$(printf '%s\n' "$p1" | sudo -n "$SETPASS" add)" && [[ -n "$key" ]]; then
         done_mark
+        rm -f "$HOME/.config/kscreenlockerrc"   # the screen may lock itself now that there is a password
         kdialog --title "$TITLE" --msgbox $'Done. Your password is set.\nIt is also the password of the root account.\n\nNext you get your RECOVERY KEY. Save it: it is the only way to reset a forgotten password.'
-        if ! "${MAS_SHOWKEY:-/usr/local/bin/mas-showkey}" "$key" >/dev/null 2>&1; then
+        # The key goes through standard input / a private file, never on a command line (other users
+        # could see a command line with "ps").
+        if ! printf '%s\n' "$key" | "${MAS_SHOWKEY:-/usr/local/bin/mas-showkey}" - >/dev/null 2>&1; then
           # No window available: show the key in a plain box instead
-          kdialog --title "$TITLE" --msgbox "Your recovery key (write it down):"$'\n\n'"$key"
+          keyfile="$(umask 077; mktemp)"
+          printf 'Your recovery key (write it down):\n\n%s\n' "$key" > "$keyfile"
+          kdialog --title "$TITLE" --textbox "$keyfile" 480 220
+          rm -f "$keyfile"
         fi
       else
         kdialog --title "$TITLE" --error $'Could not set the password.\nYou can set it later in a terminal with:  passwd'

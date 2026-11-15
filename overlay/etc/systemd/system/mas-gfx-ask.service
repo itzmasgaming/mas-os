@@ -1,10 +1,6 @@
 [Unit]
 Description=MAS asks how the desktop should be drawn (live system only)
 ConditionPathExists=/etc/sddm.conf.d/autologin.conf
-# With the boot logo (kernel option "splash") the text menu would break it, so it only runs without
-# the logo, or when you add  mas.menu  to the boot line.
-ConditionKernelCommandLine=|!splash
-ConditionKernelCommandLine=|mas.menu
 Before=mas-gfx.service sddm.service display-manager.service
 After=local-fs.target
 

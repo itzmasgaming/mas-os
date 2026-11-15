@@ -48,7 +48,21 @@ else
   args+=(-cpu qemu64)
 fi
 
-if [[ "${MAS_SANDBOX_NET:-user}" == "none" ]]; then
+# Internet in the sandbox also lets the guest reach services on this computer's own address
+# (QEMU limitation). So ask, and default to the safer answer when the choice is not set.
+if [[ -z "${MAS_SANDBOX_NET:-}" ]]; then
+  if command -v kdialog >/dev/null 2>&1; then
+    if kdialog --title "MAS Sandbox" --yes-label "Internet on" --no-label "No internet (safest)" \
+         --yesno $'Should the Sandbox have internet?\n\nWith internet the guest can download things, but it can also reach programs that listen on this computer. Choose "No internet" for anything you do not trust.'; then
+      MAS_SANDBOX_NET=user
+    else
+      MAS_SANDBOX_NET=none
+    fi
+  else
+    MAS_SANDBOX_NET=none
+  fi
+fi
+if [[ "${MAS_SANDBOX_NET}" == "none" ]]; then
   args+=(-nic none)
 else
   args+=(-nic user)

@@ -1,12 +1,12 @@
 [SddmGreeterTheme]
 Name=MAS
 Description=MAS OS login screen
-Author=MAS OS
-Version=1.0
-Website=
+Author=MAS
 Type=sddm-theme
+Version=1.0
+License=GPLv2+
 MainScript=Main.qml
 ConfigFile=theme.conf
 Theme-Id=mas
 Theme-API=2.0
-QTVersion=6
+QtVersion=6

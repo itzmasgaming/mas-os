@@ -10,14 +10,17 @@ import gi
 gi.require_version("Gtk", "4.0")
 from gi.repository import Gdk, Gtk  # noqa: E402
 
-KEY = sys.argv[1] if len(sys.argv) > 1 else ""
+# The key is read from standard input (mas-showkey -), so it never shows up in the process list.
+KEY = ""
+if len(sys.argv) > 1 and sys.argv[1] == "-":
+    KEY = sys.stdin.readline().strip()
 if not KEY:
-    sys.exit("usage: mas-showkey KEY")
+    sys.exit("usage: printf '%s\\n' KEY | mas-showkey -")
 
 fd, PNG = tempfile.mkstemp(suffix=".png")
 os.close(fd)
 try:
-    subprocess.run(["qrencode", "-s", "8", "-m", "2", "-o", PNG, KEY], check=True)
+    subprocess.run(["qrencode", "-s", "8", "-m", "2", "-o", PNG], input=KEY.encode(), check=True)
     HAVE_QR = True
 except (OSError, subprocess.CalledProcessError):
     HAVE_QR = False

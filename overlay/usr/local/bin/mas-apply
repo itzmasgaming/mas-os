@@ -39,7 +39,7 @@ sed -i '/^#\[multilib\]/{s/^#//;n;s/^#//}' "$PACCONF"
 if ! grep -q '^\[multilib\]' "$PACCONF"; then
   printf '\n[multilib]\nInclude = /etc/pacman.d/mirrorlist\n' >> "$PACCONF"
 fi
-in_root pacman -Sy --noconfirm
+in_root pacman -Syu --noconfirm   # a full upgrade, never a partial one
 
 echo "==> Installing MAS packages"
 mapfile -t REQ < <(grep -vE '^\s*(#|$)' "$LAYER/packages.txt")
@@ -53,6 +53,9 @@ while read -r pkg; do
 done < <(grep -vE '^\s*(#|$)' "$LAYER/optional.txt")
 
 echo "==> Adding MAS branding, launchers and the shield"
+# /etc/os-release is normally a link to /usr/lib/os-release (owned by the system package and reset by
+# updates). Replace the link with a real file so the MAS name is kept.
+if [[ -L "$R/etc/os-release" ]]; then rm -f "$R/etc/os-release"; fi
 cp -a "$LAYER/overlay/." "${R:-/}"
 chmod 755 "$R"/usr/local/bin/mas-* 2>/dev/null || true
 chmod 440 "$R"/etc/sudoers.d/mas-welcome "$R"/etc/sudoers.d/10-mas-wheel 2>/dev/null || true
@@ -71,8 +74,14 @@ if [[ -n "$R" ]]; then
   if ! in_root id -u mas >/dev/null 2>&1; then
     in_root useradd -m -G wheel -s /bin/bash -c "MAS" mas
     in_root passwd -d mas >/dev/null 2>&1 || true
+    # no automatic screen lock while the account has no password (the welcome screen removes this)
+    mkdir -p "$R/home/mas/.config"
+    printf '[Daemon]\nAutolock=false\nLockOnResume=false\n' > "$R/home/mas/.config/kscreenlockerrc"
+    in_root chown -R mas:mas /home/mas/.config
     mkdir -p "$R/var/lib/mas" "$R/etc/sddm.conf.d"
     : > "$R/var/lib/mas/default-open"
+    echo mas > "$R/var/lib/mas/passwordless"
+    chmod 644 "$R/var/lib/mas/passwordless"
     printf 'mas ALL=(ALL:ALL) NOPASSWD: ALL\n' > "$R/etc/sudoers.d/mas-default-open"
     chmod 440 "$R/etc/sudoers.d/mas-default-open"
     sess=""
@@ -87,38 +96,53 @@ if [[ -n "$R" ]]; then
   fi
 fi
 
-echo "==> Adding the boot logo (Plymouth)"
-# 1) the plymouth hook in the initramfs   2) "quiet splash" on the boot line   (all best effort)
-MKC="$R/etc/mkinitcpio.conf"
-if [[ -f "$MKC" ]] && ! grep '^HOOKS=' "$MKC" | grep -qw plymouth; then
-  if grep '^HOOKS=' "$MKC" | grep -qw kms; then
-    sed -i -E '/^HOOKS=/ s/\bkms\b/kms plymouth/' "$MKC"
-  elif grep '^HOOKS=' "$MKC" | grep -qw udev; then
-    sed -i -E '/^HOOKS=/ s/\budev\b/udev plymouth/' "$MKC"
-  elif grep '^HOOKS=' "$MKC" | grep -qw systemd; then
-    sed -i -E '/^HOOKS=/ s/\bsystemd\b/systemd plymouth/' "$MKC"
-  fi
-fi
-in_root mkinitcpio -P >/dev/null 2>&1 || echo "    (could not rebuild the initramfs - run: sudo mkinitcpio -P)"
-GRUBCFG="$R/etc/default/grub"
-if [[ -f "$GRUBCFG" ]]; then
-  for w in quiet splash; do
-    grep -E '^GRUB_CMDLINE_LINUX_DEFAULT=' "$GRUBCFG" | grep -qw "$w" \
-      || sed -i -E "s/^(GRUB_CMDLINE_LINUX_DEFAULT=.)(.*)(.)\$/\1\2 $w\3/" "$GRUBCFG"
-  done
-  if [[ -d "$R/boot/grub" ]]; then in_root grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || echo "    (could not update GRUB - run: sudo grub-mkconfig -o /boot/grub/grub.cfg)"; fi
-fi
-for entry in "$R"/boot/loader/entries/*.conf; do
-  [[ -f "$entry" ]] || continue
-  grep '^options' "$entry" | grep -qw splash || sed -i -E '/^options/ s/$/ quiet splash/' "$entry"
-done
-
 echo "==> Turning on services"
 in_root systemctl disable systemd-networkd.service iwd.service >/dev/null 2>&1 || true
-in_root systemctl enable sddm.service NetworkManager.service nftables.service mas-gfx.service mas-boot-prompt.service
-in_root systemctl enable mas-loginstate.service mas-loginstate.path plymouth-quit.service >/dev/null 2>&1 || true
-in_root systemctl enable waydroid-container.service >/dev/null 2>&1 || true
+in_root systemctl enable sddm.service NetworkManager.service nftables.service mas-gfx.service mas-boot-prompt.service mas-theme-check.service mas-theme-guard.service
 in_root systemctl enable snapper-timeline.timer snapper-cleanup.timer grub-btrfs.path >/dev/null 2>&1 || true
+
+# Restore points: Snapper needs a config for "/". archinstall only makes one on some choices, so make it here.
+if [[ "$(stat -f -c %T "${R:-/}" 2>/dev/null)" == btrfs ]]; then
+  if [[ ! -f "$R/etc/snapper/configs/root" ]] && [[ -f "$R/etc/snapper/config-templates/default" ]]; then
+    echo "==> Setting up restore points (Snapper)"
+    mkdir -p "$R/etc/snapper/configs"
+    sed 's|^SUBVOLUME=.*|SUBVOLUME="/"|' "$R/etc/snapper/config-templates/default" > "$R/etc/snapper/configs/root"
+    mkdir -p "$R/etc/conf.d"
+    if [[ -f "$R/etc/conf.d/snapper" ]] && grep -q '^SNAPPER_CONFIGS=' "$R/etc/conf.d/snapper"; then
+      sed -i 's|^SNAPPER_CONFIGS=.*|SNAPPER_CONFIGS="root"|' "$R/etc/conf.d/snapper"
+    else
+      echo 'SNAPPER_CONFIGS="root"' >> "$R/etc/conf.d/snapper"
+    fi
+    if [[ ! -d "$R/.snapshots" ]]; then
+      in_root btrfs subvolume create /.snapshots >/dev/null 2>&1 || echo "    (could not create /.snapshots)"
+    fi
+    chmod 750 "$R/.snapshots" 2>/dev/null || true
+  fi
+else
+  echo "==> NOTE: this system does not use Btrfs, so restore points (snapshots) are OFF."
+fi
+
+# Boot logo (Plymouth) instead of the [ OK ] lines. Everything here is optional: if it fails, boot still works.
+if [[ -x "$R/usr/bin/plymouth-set-default-theme" || -x "$R/usr/bin/plymouthd" ]]; then
+  echo "==> Boot logo"
+  MK="$R/etc/mkinitcpio.conf"
+  if [[ -f "$MK" ]] && ! grep -q plymouth "$MK"; then
+    if grep -q '^HOOKS=.*\bsystemd\b' "$MK"; then
+      sed -i '/^HOOKS=/ s/\bsystemd\b/systemd plymouth/' "$MK"
+    else
+      sed -i '/^HOOKS=/ s/\budev\b/udev plymouth/' "$MK"
+    fi
+  fi
+  in_root mkinitcpio -P >/dev/null 2>&1 || echo "    (could not rebuild the boot image, the boot logo may not show)"
+  GR="$R/etc/default/grub"
+  if [[ -f "$GR" ]] && ! grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=.*splash' "$GR"; then
+    sed -i '/^GRUB_CMDLINE_LINUX_DEFAULT=/ s/"$/ quiet splash"/' "$GR"
+    in_root grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || true
+  fi
+  for e in "$R"/boot/loader/entries/*.conf; do
+    if [[ -f "$e" ]] && ! grep -q splash "$e"; then sed -i '/^options / s/$/ quiet splash/' "$e"; fi
+  done
+fi
 
 echo
 echo "MAS OS is set up. Reboot to start it."

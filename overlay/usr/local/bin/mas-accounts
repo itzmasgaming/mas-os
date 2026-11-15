@@ -10,7 +10,6 @@ SUDO="${MAS_SUDO:-sudo}"
 GATE="${MAS_GATE:-/var/lib/mas/default-open}"
 RECSTORE="${MAS_RECOVERY_STORE:-/var/lib/mas/recovery}"
 DEFAULT=mas
-refresh_login() { $SUDO "${MAS_LOGINSTATE:-/usr/local/bin/mas-loginstate}" >/dev/null 2>&1 || true; }  # tells the login screen who has no password
 TITLE="MAS accounts"
 me="$(id -un)"
 
@@ -77,10 +76,11 @@ create_account() {
   fi
   if [[ -n "$p1" ]]; then
     printf '%s:%s\n' "$name" "$p1" | $SUDO chpasswd
+    $SUDO /usr/local/bin/mas-passwordless remove "$name"
   else
     $SUDO passwd -d "$name" >/dev/null
+    $SUDO /usr/local/bin/mas-passwordless add "$name"   # the login screen then shows a Sign In button
   fi
-  refresh_login
   say "The account '$name' is ready. Log out to sign in with it."
 }
 
@@ -116,13 +116,13 @@ delete_account() {
     1) $SUDO userdel "$target" ;;
     *) return 0 ;;
   esac
+  $SUDO /usr/local/bin/mas-passwordless remove "$target"
   if [[ "$target" == "$DEFAULT" ]]; then
     $SUDO rm -f "$GATE" /etc/sudoers.d/mas-default-open /etc/sddm.conf.d/mas-default-autologin.conf
   fi
   if $SUDO grep -q "\"user\": \"$target\"" "$RECSTORE" 2>/dev/null; then
     $SUDO rm -f "$RECSTORE"
   fi
-  refresh_login
   say "The account '$target' was deleted."
 }
 

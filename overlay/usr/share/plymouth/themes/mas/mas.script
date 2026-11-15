@@ -1,75 +1,38 @@
-# MAS OS boot screen: black background, the MAS logo in the middle, a spinning ring of dots below it.
-Window.SetBackgroundTopColor(0.0, 0.0, 0.0);
-Window.SetBackgroundBottomColor(0.0, 0.0, 0.0);
+# MAS boot screen: the MAS logo in the middle of a dark blue screen, fading in and out gently.
 
-screen_w = Window.GetWidth();
-screen_h = Window.GetHeight();
-cx = screen_w / 2;
+Window.SetBackgroundTopColor(0.02, 0.03, 0.06);
+Window.SetBackgroundBottomColor(0.05, 0.09, 0.18);
 
-# ---- logo (about 22% of the screen height), a little above the middle
-logo_img = Image("logo.png");
-logo_h = screen_h * 0.22;
-logo_w = logo_img.GetWidth() * logo_h / logo_img.GetHeight();
-logo_img = logo_img.Scale(logo_w, logo_h);
-logo_sprite = Sprite(logo_img);
-logo_top = screen_h * 0.5 - logo_h * 0.6;
-logo_sprite.SetX(cx - logo_w / 2);
-logo_sprite.SetY(logo_top);
-logo_sprite.SetZ(10);
-
-# ---- spinner: 8 dots in a ring, the bright one runs around
-dot_img = Image("dot.png");
-dot_size = screen_h * 0.011;
-if (dot_size < 6) dot_size = 6;
-dot_img = dot_img.Scale(dot_size, dot_size);
-ring_r = screen_h * 0.028;
-if (ring_r < 16) ring_r = 16;
-ring_cy = logo_top + logo_h + screen_h * 0.07;
-
-for (i = 0; i < 8; i++) {
-  a = i * 2 * Math.Pi / 8;
-  dots[i] = Sprite(dot_img);
-  dots[i].SetX(cx + ring_r * Math.Sin(a) - dot_size / 2);
-  dots[i].SetY(ring_cy - ring_r * Math.Cos(a) - dot_size / 2);
-  dots[i].SetZ(10);
-  dots[i].SetOpacity(0.15);
-}
+logo.image = Image("logo.png");
+logo.sprite = Sprite(logo.image);
+logo.x = Window.GetX() + Window.GetWidth() / 2 - logo.image.GetWidth() / 2;
+logo.y = Window.GetY() + Window.GetHeight() / 2 - logo.image.GetHeight() / 2;
+logo.sprite.SetPosition(logo.x, logo.y, 10);
 
 frame = 0;
-fun refresh_callback() {
-  frame = frame + 1;
-  head = Math.Int(frame / 3) % 8;
-  for (i = 0; i < 8; i++) {
-    d = (head - i + 8) % 8;
-    dots[i].SetOpacity(1.0 - d * 0.115);
+
+fun refresh_callback ()
+  {
+    frame++;
+    opacity = 0.78 + 0.22 * Math.Sin(frame / 18);
+    logo.sprite.SetOpacity(opacity);
   }
-}
-Plymouth.SetRefreshFunction(refresh_callback);
 
-# ---- disk password prompt (only shown when the disk is encrypted)
-prompt_sprite = Sprite();
-prompt_sprite.SetZ(20);
-bullet_sprite = Sprite();
-bullet_sprite.SetZ(20);
+Plymouth.SetRefreshFunction (refresh_callback);
 
-fun password_callback(prompt, bullets) {
-  prompt_img = Image.Text(prompt, 1, 1, 1);
-  prompt_sprite.SetImage(prompt_img);
-  prompt_sprite.SetX(cx - prompt_img.GetWidth() / 2);
-  prompt_sprite.SetY(ring_cy + screen_h * 0.06);
-  prompt_sprite.SetOpacity(1);
-  text = "";
-  for (i = 0; i < bullets; i++) text = text + "*";
-  bullet_img = Image.Text(text, 1, 1, 1);
-  bullet_sprite.SetImage(bullet_img);
-  bullet_sprite.SetX(cx - bullet_img.GetWidth() / 2);
-  bullet_sprite.SetY(ring_cy + screen_h * 0.06 + prompt_img.GetHeight() + 8);
-  bullet_sprite.SetOpacity(1);
-}
-Plymouth.SetDisplayPasswordFunction(password_callback);
-
-fun normal_callback() {
-  prompt_sprite.SetOpacity(0);
-  bullet_sprite.SetOpacity(0);
-}
-Plymouth.SetDisplayNormalFunction(normal_callback);
+# A line of text under the logo (used for "Forgot your password? Press R")
+message_sprite = Sprite();
+fun display_message_callback (text)
+  {
+    img = Image.Text(text, 0.78, 0.85, 1.0);
+    message_sprite.SetImage(img);
+    message_sprite.SetOpacity(1);
+    message_sprite.SetPosition(Window.GetX() + Window.GetWidth() / 2 - img.GetWidth() / 2,
+                               logo.y + logo.image.GetHeight() + 40, 20);
+  }
+fun hide_message_callback (text)
+  {
+    message_sprite.SetOpacity(0);
+  }
+Plymouth.SetDisplayMessageFunction (display_message_callback);
+Plymouth.SetHideMessageFunction (hide_message_callback);

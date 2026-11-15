@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# mas-theme-guard - watches the first 45 seconds after the login screen starts. If the MAS login screen
+# fails to load or crashes, it switches to the standard Breeze login screen and restarts the login manager.
+# Only acts once per boot.
+CHECK="${MAS_THEME_CHECK:-/usr/local/bin/mas-theme-check}"
+FLAG="${MAS_WATCHDOG_FLAG:-/run/mas-theme-fallback}"
+PATTERN='Type .* unavailable|is not a type|module .* is not installed|Syntax error|Expected token|Component is not ready|Cannot assign to non-existent property|QQmlApplicationEngine failed to load|Failed to load.*(themes/mas|Main\.qml)|sddm-greeter.*(crashed|core dumped|SEGV)|Greeter stopped.*Crash'
+
+for _ in $(seq 1 15); do
+  sleep 3
+  if journalctl -b -u sddm --no-pager -o cat 2>/dev/null | grep -qE "$PATTERN"; then
+    touch "$FLAG"
+    logger -t mas-theme "the MAS login screen failed; switching to the standard one" 2>/dev/null || true
+    "$CHECK"
+    systemctl restart sddm.service
+    exit 0
+  fi
+done
+exit 0

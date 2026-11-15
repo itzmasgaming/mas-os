@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Reset live-session password (recovery key)
+Comment=Only for this live session. To reset an installed MAS, press R at the start-up screen.
+Exec=konsole -e sudo /usr/local/bin/mas-recovery reset
+Icon=dialog-password
+Terminal=false
+Categories=System;Settings;

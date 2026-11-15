@@ -1,8 +1,5 @@
 # Optional packages: used when they exist in the Arch repositories, skipped (with a message) when they do not.
 
-# Android apps (.apk)
-waydroid
-
 # More archive formats (.7z)
 7zip
 
@@ -23,6 +20,9 @@ thunar
 xfce4-terminal
 network-manager-applet
 xfce4-pulseaudio-plugin
+# notifications (the connection dot / Shield messages) and the "ask for password" window in XFCE
+xfce4-notifyd
+polkit-gnome
 
 # Scan the recovery key QR code with a camera when resetting a password
 zbar
@@ -32,3 +32,6 @@ sddm-kcm
 kde-gtk-config
 fuse-overlayfs
 noto-fonts-emoji
+
+# Boot logo instead of the [ OK ] text
+plymouth

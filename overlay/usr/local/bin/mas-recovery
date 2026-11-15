@@ -115,9 +115,6 @@ def ask_new_password():
 def set_passwords(user, password):
     # The same password for the user and for root
     subprocess.run(["chpasswd"], input="%s:%s\nroot:%s\n" % (user, password, password), text=True, check=True)
-    # tell the login screen this account now has a password
-    subprocess.run([os.environ.get("MAS_LOGINSTATE", "/usr/local/bin/mas-loginstate")], check=False,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def cmd_new(argv):

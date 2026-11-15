@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=MAS password window for XFCE
+Exec=/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1
+TryExec=/usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1
+OnlyShowIn=XFCE;
+NoDisplay=true

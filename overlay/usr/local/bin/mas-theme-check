@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# mas-theme-check - runs before the login screen starts. It keeps the MAS login screen when that looks
+# healthy, and otherwise switches to the standard Breeze login screen (the reason goes to the system log:
+#   journalctl -t mas-theme).
+# Boot option  mas.classic  forces the standard login screen.
+THEME_DIR="${MAS_THEME_DIR:-/usr/share/sddm/themes/mas}"
+FALLBACK="${MAS_THEME_FALLBACK:-/etc/sddm.conf.d/zz-mas-theme-fallback.conf}"
+CMDLINE="${MAS_CMDLINE:-/proc/cmdline}"
+QMLLINT="${MAS_QMLLINT:-/usr/lib/qt6/bin/qmllint}"
+WATCHDOG_FLAG="${MAS_WATCHDOG_FLAG:-/run/mas-theme-fallback}"
+
+log() { logger -t mas-theme "$*" 2>/dev/null || true; }
+
+use_breeze() {
+  mkdir -p "$(dirname "$FALLBACK")"
+  printf '[Theme]\nCurrent=breeze\n' > "$FALLBACK"
+  log "using the standard login screen: $1"
+  exit 0
+}
+
+if grep -q 'mas\.classic' "$CMDLINE" 2>/dev/null; then use_breeze "boot option mas.classic"; fi
+if [[ ! -f "$THEME_DIR/Main.qml" || ! -f "$THEME_DIR/metadata.desktop" ]]; then use_breeze "theme files are missing"; fi
+if [[ -e "$WATCHDOG_FLAG" ]]; then use_breeze "the watchdog saw a problem with it"; fi
+
+if [[ -x "$QMLLINT" ]]; then
+  out="$("$QMLLINT" "$THEME_DIR/Main.qml" 2>&1)"
+  if printf '%s\n' "$out" | grep -q '^Error'; then
+    use_breeze "qmllint found an error: $(printf '%s' "$out" | grep '^Error' | head -n2 | tr '\n' ' ')"
+  fi
+fi
+
+rm -f "$FALLBACK"
+log "using the MAS login screen"
+exit 0

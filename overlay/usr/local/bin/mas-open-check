@@ -1,0 +1,5 @@
+#!/bin/sh
+# mas-open-check - called by the login screen (PAM). Exit code 0 = "let this account in without a password".
+# True only for the default account "mas" while it is open (no password): the file /var/lib/mas/default-open
+# exists. It is removed when "mas" gets a password or is deleted.
+[ "${PAM_USER:-}" = "${MAS_DEFAULT_ACCOUNT:-mas}" ] && [ -e "${MAS_GATE:-/var/lib/mas/default-open}" ]

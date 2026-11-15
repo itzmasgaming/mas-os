@@ -3,3 +3,4 @@ The account "mas" has no password. Start menu > "Accounts" creates or deletes ac
 Desktop did not start or the screen is black?  Type:  mas-debug
 Switch desktop: sudo mas-gfx xfce   (or basic, soft, normal, auto)  then  sudo systemctl restart sddm
 Forgot the password you set? Start menu > "Reset password (recovery key)", or:  sudo mas-recovery reset
+Login screen looks wrong?  Boot option  mas.classic  gives the standard one.  Log:  journalctl -t mas-theme
