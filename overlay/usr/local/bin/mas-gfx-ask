@@ -7,6 +7,10 @@ RUN="${MAS_RUN:-/run}"
 CMDLINE="${MAS_CMDLINE:-/proc/cmdline}"
 
 if grep -q 'mas\.gfx=' "$CMDLINE" 2>/dev/null; then exit 0; fi
+# The boot logo (Plymouth) is shown: do not put a text menu on top of it, unless  mas.menu  is on the boot line.
+if grep -qw 'splash' "$CMDLINE" 2>/dev/null && ! grep -qw 'mas.menu' "$CMDLINE" 2>/dev/null; then exit 0; fi
+# Hide the boot logo so the menu is visible
+if command -v plymouth >/dev/null 2>&1 && plymouth --ping >/dev/null 2>&1; then plymouth quit >/dev/null 2>&1 || true; fi
 
 clear 2>/dev/null || true
 cat <<'EOF'

@@ -87,9 +87,36 @@ if [[ -n "$R" ]]; then
   fi
 fi
 
+echo "==> Adding the boot logo (Plymouth)"
+# 1) the plymouth hook in the initramfs   2) "quiet splash" on the boot line   (all best effort)
+MKC="$R/etc/mkinitcpio.conf"
+if [[ -f "$MKC" ]] && ! grep '^HOOKS=' "$MKC" | grep -qw plymouth; then
+  if grep '^HOOKS=' "$MKC" | grep -qw kms; then
+    sed -i -E '/^HOOKS=/ s/\bkms\b/kms plymouth/' "$MKC"
+  elif grep '^HOOKS=' "$MKC" | grep -qw udev; then
+    sed -i -E '/^HOOKS=/ s/\budev\b/udev plymouth/' "$MKC"
+  elif grep '^HOOKS=' "$MKC" | grep -qw systemd; then
+    sed -i -E '/^HOOKS=/ s/\bsystemd\b/systemd plymouth/' "$MKC"
+  fi
+fi
+in_root mkinitcpio -P >/dev/null 2>&1 || echo "    (could not rebuild the initramfs - run: sudo mkinitcpio -P)"
+GRUBCFG="$R/etc/default/grub"
+if [[ -f "$GRUBCFG" ]]; then
+  for w in quiet splash; do
+    grep -E '^GRUB_CMDLINE_LINUX_DEFAULT=' "$GRUBCFG" | grep -qw "$w" \
+      || sed -i -E "s/^(GRUB_CMDLINE_LINUX_DEFAULT=.)(.*)(.)\$/\1\2 $w\3/" "$GRUBCFG"
+  done
+  if [[ -d "$R/boot/grub" ]]; then in_root grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || echo "    (could not update GRUB - run: sudo grub-mkconfig -o /boot/grub/grub.cfg)"; fi
+fi
+for entry in "$R"/boot/loader/entries/*.conf; do
+  [[ -f "$entry" ]] || continue
+  grep '^options' "$entry" | grep -qw splash || sed -i -E '/^options/ s/$/ quiet splash/' "$entry"
+done
+
 echo "==> Turning on services"
 in_root systemctl disable systemd-networkd.service iwd.service >/dev/null 2>&1 || true
 in_root systemctl enable sddm.service NetworkManager.service nftables.service mas-gfx.service mas-boot-prompt.service
+in_root systemctl enable mas-loginstate.service mas-loginstate.path plymouth-quit.service >/dev/null 2>&1 || true
 in_root systemctl enable waydroid-container.service >/dev/null 2>&1 || true
 in_root systemctl enable snapper-timeline.timer snapper-cleanup.timer grub-btrfs.path >/dev/null 2>&1 || true
 

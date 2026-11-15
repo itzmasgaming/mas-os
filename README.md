@@ -3,6 +3,9 @@
 This folder turns into the **MAS OS ISO** (a disk image you can start in a virtual machine or from a USB stick).
 It builds MAS on top of Arch Linux with a KDE Plasma desktop that is restyled with your logo.
 
+> **Changed in this version:** new login screen (Sign In button, Loading / Wrong password), boot logo (Plymouth) instead of `[ OK ]` lines.
+> The boot logo and the login screen could not be tried on a real boot here. The login screen was drawn and clicked through with a test harness; the boot logo script could not be shown.
+>
 > **Status: untested.** This kit was written without being able to run a build or boot the result.
 > The first build may stop with an error. If it does, send the error text and it will be fixed.
 
@@ -26,7 +29,9 @@ It builds MAS on top of Arch Linux with a KDE Plasma desktop that is restyled wi
 | Default account with no password | The account **mas** has no password, in the live session and on an installed MAS. You are never asked for an administrator password while you use it. It signs in by itself on an installed MAS. When you press **Add password** in the welcome window, all of that switches off and the account is protected like any other |
 | Create and delete accounts | Start menu > **Accounts (create or delete)**. Log in as **mas**, create your own administrator account, log out, log in as your new account, and delete **mas** if you do not want it. It refuses to delete an account that is signed in, or the last administrator |
 | The password is also the root password | When you press **Add password**, MAS sets that same password for your account and for `root`. **No password** clears both |
-| Recovery key (forgot password) | After you add a password, a window shows a **recovery key** and a **QR code** (scan it with your phone to save a copy). On an installed MAS, press **R** within 3 seconds at the "Forgot your password?" message that shows before the login screen, type the key, and choose a new password. The old key then stops working and you get a new one. In the live session use Start menu > **Reset password (recovery key)**. A camera can scan the QR code if the computer has one. Make a new key any time: `sudo mas-recovery new` |
+| Recovery key (forgot password) | After you add a password, a window shows a **recovery key** and a **QR code** (scan it with your phone to save a copy). On an installed MAS, restart, press **E** in the boot menu, add `mas.recovery` to the end of the `linux` line and start (Ctrl+X in GRUB). A "Forgot your password?" prompt then shows before the login screen: press **R** within 3 seconds, type the key, and choose a new password. (This is not shown on every boot any more, so it does not cover the boot logo.) The old key then stops working and you get a new one. In the live session use Start menu > **Reset password (recovery key)**. A camera can scan the QR code if the computer has one. Make a new key any time: `sudo mas-recovery new` |
+| Login screen: **Sign In** button | MAS has its own login screen (SDDM theme `mas`). An account with **no password** shows a single **Sign In** button, no password box. An account **with** a password shows a password box. A wrong password shows **Loading...** and then a red **Wrong password** on the same screen (the screen does not go black). The list of accounts without a password is kept in `/var/lib/mas/blank-users` by `mas-loginstate`, which updates itself whenever a password or account changes |
+| Boot logo instead of `[ OK ]` lines | **Plymouth** with the `mas` theme: black screen, your logo in the middle and a spinning ring of dots, like Windows. The boot lines are hidden with `quiet splash` on the boot line (already added to every boot menu entry) |
 | Install it on a disk | `Install MAS` icon on the live desktop |
 
 ## Step 1 - Build the ISO
@@ -74,7 +79,7 @@ Android apps (Waydroid) and heavy games need real hardware or a GPU. Expect them
 
 ### Black screen with only a mouse cursor?
 
-After the first boot menu, MAS shows its own menu on a text screen: **How should the desktop start?**
+The boot logo replaces the old text menu, so **MAS no longer asks how the desktop should start**; it uses *Automatic* (safe CPU drawing inside a virtual machine). To get the menu back, press **e** (UEFI) or **Tab** (BIOS) at the boot menu and add `mas.menu` to the end of the line. The menu is **How should the desktop start?**
 
 - **1** Automatic (nothing pressed for 12 seconds also means 1)
 - **2** Safe: Plasma drawn by the CPU. Try this if the screen goes black.
@@ -95,6 +100,13 @@ To skip that menu or set the mode by hand:
 3. Still black? Press **Right Ctrl + F3** to get a text console, log in as `mas` (no password) and run `mas-debug`. Send a screenshot of what it prints.
 
 On a text console you can also change the mode for good with `sudo mas-gfx basic` (or `soft`, `normal`, `auto`) followed by `sudo systemctl restart sddm`.
+
+### Boot logo and login screen
+
+- Do not want the logo? At the boot menu press **e** / **Tab** and remove `quiet splash`: you see the normal boot messages and the text menu again.
+- The logo is in `overlay/usr/share/plymouth/themes/mas/` (`logo.png`, `mas.script`). Change `logo.png` to change it.
+- The login screen is in `overlay/usr/share/sddm/themes/mas/Main.qml`. It draws with the CPU (`QT_QUICK_BACKEND=software`, set in `overlay/etc/sddm.conf.d/zz-mas-theme.conf`) so it works in every virtual machine.
+- If a wrong password still gives a black screen, press Right Ctrl + F3, log in on the text console and send the output of `journalctl -b -u sddm --no-pager | tail -50`.
 
 ## Step 3 - Install it on a disk
 

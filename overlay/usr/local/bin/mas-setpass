@@ -9,6 +9,8 @@ set -u
 PENDING="${MAS_PENDING:-/var/lib/mas/firstrun-pending}"
 STORE="${MAS_RECOVERY_STORE:-/var/lib/mas/recovery}"
 RECOVERY="${MAS_RECOVERY:-/usr/local/bin/mas-recovery}"
+LOGINSTATE="${MAS_LOGINSTATE:-/usr/local/bin/mas-loginstate}"
+refresh_login() { "$LOGINSTATE" >/dev/null 2>&1 || true; }  # tells the login screen who has no password
 
 if [[ $EUID -ne 0 ]]; then echo "mas-setpass: needs root" >&2; exit 1; fi
 who="${SUDO_USER:-}"
@@ -30,6 +32,7 @@ case "${1:-}" in
       rm -f "${MAS_GATE:-/var/lib/mas/default-open}" "${MAS_OPEN_SUDOERS:-/etc/sudoers.d/mas-default-open}" \
             "${MAS_OPEN_AUTOLOGIN:-/etc/sddm.conf.d/mas-default-autologin.conf}"
     fi
+    refresh_login
     printf '%s\n' "$key"
     ;;
   none)
@@ -37,6 +40,7 @@ case "${1:-}" in
     passwd -d root >/dev/null || exit 1
     rm -f "$STORE"
     rm -f "$PENDING"
+    refresh_login
     ;;
   *)
     echo "usage: mas-setpass add|none" >&2

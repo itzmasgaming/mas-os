@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# mas-loginstate - writes the list of accounts that have NO password to /var/lib/mas/blank-users.
+# The MAS login screen (SDDM theme "mas") reads that list: accounts on it get a "Sign In" button,
+# all other accounts get a password box. If the list cannot be read, the password box is used.
+# Runs as root: at boot before the login screen, whenever /etc/shadow changes (mas-loginstate.path),
+# and from the MAS tools that change passwords or accounts.
+set -u
+SHADOW="${MAS_SHADOW:-/etc/shadow}"
+PASSWD="${MAS_PASSWD:-/etc/passwd}"
+OUT="${MAS_BLANK_OUT:-/var/lib/mas/blank-users}"
+
+[[ -r "$SHADOW" && -r "$PASSWD" ]] || exit 0
+mkdir -p "$(dirname "$OUT")"
+tmp="$OUT.new.$$"
+# normal accounts (uid 1000-59999) whose password field in /etc/shadow is empty
+awk -F: 'NR==FNR { if ($3 >= 1000 && $3 < 60000) ok[$1] = 1; next } ($1 in ok) && $2 == "" { print $1 }' \
+  "$PASSWD" "$SHADOW" > "$tmp" || { rm -f "$tmp"; exit 0; }
+chmod 644 "$tmp"
+mv -f "$tmp" "$OUT"
+exit 0

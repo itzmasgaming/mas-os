@@ -45,6 +45,31 @@ if [[ -f "$HERE/assets/splash.png" && -f "$PROFILE/syslinux/splash.png" ]]; then
   cp "$HERE/assets/splash.png" "$PROFILE/syslinux/splash.png"
 fi
 
+echo "==> Boot logo: hide the boot messages and show the MAS logo (Plymouth)"
+for d in syslinux grub efiboot; do
+  if [[ -d "$PROFILE/$d" ]]; then
+    grep -rl 'archisosearchuuid=%ARCHISO_UUID%' "$PROFILE/$d" 2>/dev/null \
+      | xargs -r sed -i 's/archisosearchuuid=%ARCHISO_UUID%/& quiet splash loglevel=3 rd.udev.log_level=3 vt.global_cursor_default=0/' || true
+  fi
+done
+# the plymouth hook has to be in the initramfs, after udev (and after kms when it is there)
+MKCONF=""
+for f in "$PROFILE/airootfs/etc/mkinitcpio.conf.d/archiso.conf" "$PROFILE/airootfs/etc/mkinitcpio.conf"; do
+  if [[ -f "$f" ]] && grep -q '^HOOKS=' "$f"; then MKCONF="$f"; break; fi
+done
+if [[ -n "$MKCONF" ]]; then
+  if ! grep '^HOOKS=' "$MKCONF" | grep -qw plymouth; then
+    if grep '^HOOKS=' "$MKCONF" | grep -qw kms; then
+      sed -i -E '/^HOOKS=/ s/\bkms\b/kms plymouth/' "$MKCONF"
+    else
+      sed -i -E '/^HOOKS=/ s/\budev\b/udev plymouth/' "$MKCONF"
+    fi
+  fi
+  grep '^HOOKS=' "$MKCONF" | grep -qw plymouth || echo "    (warning: could not add the plymouth hook to $MKCONF - the boot logo will not show)"
+else
+  echo "    (warning: no mkinitcpio HOOKS line found in the archiso profile - the boot logo will not show)"
+fi
+
 echo "==> Enabling the 32-bit (multilib) repository for Wine and games"
 sed -i '/^#\[multilib\]/{s/^#//;n;s/^#//}' "$PROFILE/pacman.conf"
 if ! grep -q '^\[multilib\]' "$PROFILE/pacman.conf"; then
@@ -111,6 +136,11 @@ ln -sf /usr/lib/systemd/system/nftables.service       "$SYS/multi-user.target.wa
 ln -sf /etc/systemd/system/mas-gfx.service            "$SYS/multi-user.target.wants/mas-gfx.service"
 # live only: asks at boot which graphics mode to use (the unit skips itself on an installed system)
 ln -sf /etc/systemd/system/mas-gfx-ask.service        "$SYS/multi-user.target.wants/mas-gfx-ask.service"
+# the boot logo goes away when the system is up (the units come with the plymouth package)
+ln -sf /usr/lib/systemd/system/plymouth-quit.service  "$SYS/multi-user.target.wants/plymouth-quit.service"
+# remembers which accounts have no password, so the login screen can show "Sign In" instead of a password box
+ln -sf /etc/systemd/system/mas-loginstate.service     "$SYS/multi-user.target.wants/mas-loginstate.service"
+ln -sf /etc/systemd/system/mas-loginstate.path        "$SYS/multi-user.target.wants/mas-loginstate.path"
 if [[ $HAVE_WAYDROID -eq 1 ]]; then
   ln -sf /usr/lib/systemd/system/waydroid-container.service "$SYS/multi-user.target.wants/waydroid-container.service"
 fi

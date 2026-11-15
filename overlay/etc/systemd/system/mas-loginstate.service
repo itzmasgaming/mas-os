@@ -1,0 +1,11 @@
+[Unit]
+Description=MAS: remember which accounts have no password (for the Sign In button)
+Before=sddm.service display-manager.service
+After=local-fs.target systemd-sysusers.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mas-loginstate
+
+[Install]
+WantedBy=multi-user.target

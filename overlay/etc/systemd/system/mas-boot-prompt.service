@@ -2,6 +2,9 @@
 Description=MAS: offer to reset a forgotten password (installed system only)
 ConditionPathExists=/var/lib/mas/recovery
 ConditionPathExists=!/etc/sddm.conf.d/autologin.conf
+# Same rule as mas-gfx-ask: no text screen on top of the boot logo unless you add  mas.recovery  to the boot line.
+ConditionKernelCommandLine=|!splash
+ConditionKernelCommandLine=|mas.recovery
 Before=sddm.service display-manager.service
 After=local-fs.target
 

@@ -1,0 +1,8 @@
+[Plymouth Theme]
+Name=MAS
+Description=MAS OS boot logo
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/mas
+ScriptFile=/usr/share/plymouth/themes/mas/mas.script

@@ -1,0 +1,10 @@
+[Unit]
+Description=MAS: watch for password changes
+
+[Path]
+PathChanged=/etc/shadow
+PathChanged=/etc/passwd
+Unit=mas-loginstate.service
+
+[Install]
+WantedBy=multi-user.target

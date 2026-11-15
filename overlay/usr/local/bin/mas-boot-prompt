@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # mas-boot-prompt - installed MAS only: for 3 seconds before the login screen, offers to reset a
 # forgotten password with the recovery key. Press R. Any other key (or nothing) continues the boot.
+if command -v plymouth >/dev/null 2>&1 && plymouth --ping >/dev/null 2>&1; then plymouth quit >/dev/null 2>&1 || true; fi
 clear 2>/dev/null || true
 printf '\n   MAS OS\n\n   Forgot your password?  Press R within 3 seconds to reset it with your recovery key.\n\n'
 key=""
