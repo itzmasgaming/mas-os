@@ -1,34 +1,116 @@
-# MAS boot screen: the MAS logo in the middle of a dark blue screen, fading in and out gently.
+# MAS boot screen
+# Dark gradient, MAS logo with a breathing glow, a spinning comet ring around it,
+# and a smooth progress bar underneath. Everything fades in on start.
 
 Window.SetBackgroundTopColor(0.02, 0.03, 0.06);
 Window.SetBackgroundBottomColor(0.05, 0.09, 0.18);
 
-logo.image = Image("logo.png");
-logo.sprite = Sprite(logo.image);
-logo.x = Window.GetX() + Window.GetWidth() / 2 - logo.image.GetWidth() / 2;
-logo.y = Window.GetY() + Window.GetHeight() / 2 - logo.image.GetHeight() / 2;
-logo.sprite.SetPosition(logo.x, logo.y, 10);
+screen.w = Window.GetWidth();
+screen.h = Window.GetHeight();
+screen.cx = Window.GetX() + screen.w / 2;
+screen.cy = Window.GetY() + screen.h / 2 - screen.h * 0.04;
 
+# scale everything with the screen height (designed for 1080p), never above 1.4x
+ui.scale = screen.h / 1080;
+if (ui.scale > 1.4) ui.scale = 1.4;
+if (ui.scale < 0.5) ui.scale = 0.5;
+
+# ---- glow behind the logo ----
+glow.raw = Image("glow.png");
+glow.image = glow.raw.Scale(glow.raw.GetWidth() * ui.scale, glow.raw.GetHeight() * ui.scale);
+glow.sprite = Sprite(glow.image);
+glow.sprite.SetPosition(screen.cx - glow.image.GetWidth() / 2,
+                        screen.cy - glow.image.GetHeight() / 2, 1);
+glow.sprite.SetOpacity(0);
+
+# ---- logo ----
+logo.raw = Image("logo.png");
+logo.image = logo.raw.Scale(logo.raw.GetWidth() * ui.scale, logo.raw.GetHeight() * ui.scale);
+logo.sprite = Sprite(logo.image);
+logo.sprite.SetPosition(screen.cx - logo.image.GetWidth() / 2,
+                        screen.cy - logo.image.GetHeight() / 2, 10);
+logo.sprite.SetOpacity(0);
+
+# ---- spinning ring ----
+ring.raw = Image("ring.png");
+ring.image = ring.raw.Scale(ring.raw.GetWidth() * ui.scale, ring.raw.GetHeight() * ui.scale);
+ring.sprite = Sprite(ring.image);
+ring.sprite.SetPosition(screen.cx - ring.image.GetWidth() / 2,
+                        screen.cy - ring.image.GetHeight() / 2, 5);
+ring.sprite.SetOpacity(0);
+
+# ---- progress bar ----
+bar.track_raw = Image("bar_track.png");
+bar.fill_raw = Image("bar_fill.png");
+bar.w = bar.track_raw.GetWidth() * ui.scale;
+bar.h = bar.track_raw.GetHeight() * ui.scale;
+bar.x = screen.cx - bar.w / 2;
+bar.y = screen.cy + ring.image.GetHeight() / 2 + 46 * ui.scale;
+
+bar.track = Sprite(bar.track_raw.Scale(bar.w, bar.h));
+bar.track.SetPosition(bar.x, bar.y, 10);
+bar.track.SetOpacity(0);
+
+bar.fill = Sprite(bar.fill_raw.Scale(bar.h, bar.h));
+bar.fill.SetPosition(bar.x, bar.y, 11);
+bar.fill.SetOpacity(0);
+
+progress.target = 0;   # real boot progress (0..1) reported by plymouth
+progress.shown = 0;    # what we draw; eased toward the target, never goes backwards
 frame = 0;
 
 fun refresh_callback ()
   {
     frame++;
-    opacity = 0.78 + 0.22 * Math.Sin(frame / 18);
-    logo.sprite.SetOpacity(opacity);
+    t = frame / 50;    # roughly seconds (50 fps)
+
+    # fade everything in over the first ~0.8s
+    fade = frame / 40;
+    if (fade > 1) fade = 1;
+
+    # logo breathes gently, glow breathes a bit more
+    logo.sprite.SetOpacity(fade * (0.88 + 0.12 * Math.Sin(t * 2.2)));
+    glow.sprite.SetOpacity(fade * (0.55 + 0.35 * Math.Sin(t * 2.2 - 0.6)));
+
+    # ring spins
+    spun = ring.image.Rotate(t * 3.6);
+    ring.sprite.SetImage(spun);
+    ring.sprite.SetPosition(screen.cx - spun.GetWidth() / 2,
+                            screen.cy - spun.GetHeight() / 2, 5);
+    ring.sprite.SetOpacity(fade * 0.95);
+
+    # progress: ease toward the target, and creep forward a little so it never looks frozen
+    goal = progress.target;
+    if (goal < progress.shown) goal = progress.shown;
+    progress.shown = progress.shown + (goal - progress.shown) * 0.06;
+    creep = (0.92 - progress.shown) * 0.0006;
+    if (creep > 0) progress.shown = progress.shown + creep;
+    if (progress.shown > 1) progress.shown = 1;
+
+    fill_w = bar.w * progress.shown;
+    if (fill_w < bar.h) fill_w = bar.h;
+    bar.fill.SetImage(bar.fill_raw.Scale(fill_w, bar.h));
+    bar.track.SetOpacity(fade);
+    bar.fill.SetOpacity(fade);
   }
 
 Plymouth.SetRefreshFunction (refresh_callback);
 
-# A line of text under the logo (used for "Forgot your password? Press R")
+fun boot_progress_callback (time, progress_value)
+  {
+    progress.target = progress_value;
+  }
+Plymouth.SetBootProgressFunction (boot_progress_callback);
+
+# A line of text under the bar (used for "Forgot your password? Press R")
 message_sprite = Sprite();
 fun display_message_callback (text)
   {
     img = Image.Text(text, 0.78, 0.85, 1.0);
     message_sprite.SetImage(img);
     message_sprite.SetOpacity(1);
-    message_sprite.SetPosition(Window.GetX() + Window.GetWidth() / 2 - img.GetWidth() / 2,
-                               logo.y + logo.image.GetHeight() + 40, 20);
+    message_sprite.SetPosition(screen.cx - img.GetWidth() / 2,
+                               bar.y + bar.h + 36 * ui.scale, 20);
   }
 fun hide_message_callback (text)
   {

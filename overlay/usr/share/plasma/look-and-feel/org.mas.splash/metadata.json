@@ -1,0 +1,12 @@
+{
+    "KPackageStructure": "Plasma/LookAndFeel",
+    "KPlugin": {
+        "Authors": [{ "Name": "MAS" }],
+        "Description": "MAS loading screen",
+        "Id": "org.mas.splash",
+        "License": "GPL-2.0+",
+        "Name": "MAS",
+        "Version": "1.0"
+    },
+    "X-Plasma-APIVersion": "2"
+}
