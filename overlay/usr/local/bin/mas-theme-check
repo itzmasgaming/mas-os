@@ -9,7 +9,20 @@ CMDLINE="${MAS_CMDLINE:-/proc/cmdline}"
 QMLLINT="${MAS_QMLLINT:-/usr/lib/qt6/bin/qmllint}"
 WATCHDOG_FLAG="${MAS_WATCHDOG_FLAG:-/run/mas-theme-fallback}"
 
+SESSION_CONF="${MAS_SESSION_CONF:-/etc/sddm.conf.d/zz-mas-session.conf}"
+WRAPPER="${MAS_WRAPPER:-/usr/local/bin/mas-wayland-session}"
+REAL_WRAPPER="${MAS_REAL_WRAPPER:-/usr/share/sddm/scripts/wayland-session}"
+
 log() { logger -t mas-theme "$*" 2>/dev/null || true; }
+
+# The session wrapper (see mas-wayland-session) is only switched on when both wrappers are there,
+# so a missing file can never stop sessions from starting. Boot option mas.nowrap turns it off.
+if [[ -x "$WRAPPER" && -x "$REAL_WRAPPER" ]] && ! grep -qw 'mas\.nowrap' "$CMDLINE" 2>/dev/null; then
+  mkdir -p "$(dirname "$SESSION_CONF")"
+  printf '[Wayland]\nSessionCommand=%s\n' "$WRAPPER" > "$SESSION_CONF"
+else
+  rm -f "$SESSION_CONF"
+fi
 
 use_breeze() {
   mkdir -p "$(dirname "$FALLBACK")"

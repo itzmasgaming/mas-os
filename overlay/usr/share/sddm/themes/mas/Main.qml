@@ -19,6 +19,10 @@ Rectangle {
     property bool busy: false
     property string message: ""
     property bool sessionsOpen: false
+    // Set when the last Plasma start of this account ended within seconds (see mas-wayland-session)
+    property string failInfo: ""
+    property int xfceIndex: -1
+    property bool userPicked: false
 
     // ---------------------------------------------------------------- logic
     function checkPasswordless() {
@@ -39,6 +43,26 @@ Rectangle {
         xhr.send()
     }
 
+    function checkFailure() {
+        var xhr = new XMLHttpRequest()
+        xhr.open("GET", "file:///var/lib/mas/flags/plasma-failed-" + root.selectedUser)
+        xhr.onreadystatechange = function() {
+            if (xhr.readyState === XMLHttpRequest.DONE) {
+                root.failInfo = (xhr.responseText || "").trim()
+            }
+        }
+        xhr.send()
+    }
+
+    // After a failed Plasma start, preselect the simple desktop (XFCE) unless the user chose a session
+    function applyFallback() {
+        if (root.failInfo !== "" && root.xfceIndex >= 0 && !root.userPicked) {
+            root.sessionIndex = root.xfceIndex
+        }
+    }
+    onFailInfoChanged: applyFallback()
+    onXfceIndexChanged: applyFallback()
+
     function doLogin() {
         if (root.busy || root.selectedUser === "") {
             return
@@ -49,10 +73,11 @@ Rectangle {
         sddm.login(root.selectedUser, root.passwordless ? "" : pwField.text, si)
     }
 
-    onSelectedUserChanged: checkPasswordless()
+    onSelectedUserChanged: { checkPasswordless(); checkFailure() }
 
     Component.onCompleted: {
         checkPasswordless()
+        checkFailure()
         if (!root.passwordless) {
             pwField.forceActiveFocus()
         }
@@ -93,13 +118,27 @@ Rectangle {
     // ---------------------------------------------------------------- look
     Image {
         anchors.fill: parent
-        source: config.background ? config.background : "file:///usr/share/mas/wallpaper-dark.jpg"
+        source: config.background ? config.background : "file:///usr/share/mas/login-bg.jpg"
         fillMode: Image.PreserveAspectCrop
     }
 
     Rectangle {
         anchors.fill: parent
         color: "#66000000"
+    }
+
+    // Finds the XFCE session in the list of sessions
+    Repeater {
+        model: sessionModel
+        delegate: Item {
+            width: 0
+            height: 0
+            Component.onCompleted: {
+                if (String(model.name).toLowerCase().indexOf("xfce") >= 0) {
+                    root.xfceIndex = index
+                }
+            }
+        }
     }
 
     // Clock
@@ -284,6 +323,32 @@ Rectangle {
         }
     }
 
+    // Shown when the desktop closed right after starting: what happened, so it can be fixed
+    Rectangle {
+        visible: root.failInfo !== ""
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: root.height - 190
+        width: Math.min(root.width - 80, 820)
+        height: 120
+        radius: 8
+        color: "#cc101828"
+        border.color: "#ff8f8f"
+        border.width: 1
+        clip: true
+
+        Text {
+            anchors.fill: parent
+            anchors.margins: 10
+            wrapMode: Text.WrapAnywhere
+            elide: Text.ElideRight
+            color: "#ffd0d0"
+            font.pixelSize: 12
+            text: "The desktop closed right after it started" +
+                  (root.xfceIndex >= 0 ? " - the simple desktop (XFCE) is selected this time.\n" : ".\n") +
+                  root.failInfo
+        }
+    }
+
     // Bottom left: desktop session
     Rectangle {
         id: sessionButton
@@ -345,6 +410,7 @@ Rectangle {
                 MouseArea {
                     anchors.fill: parent
                     onClicked: {
+                        root.userPicked = true
                         root.sessionIndex = index
                         root.sessionsOpen = false
                     }

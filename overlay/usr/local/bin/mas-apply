@@ -59,6 +59,9 @@ if [[ -L "$R/etc/os-release" ]]; then rm -f "$R/etc/os-release"; fi
 cp -a "$LAYER/overlay/." "${R:-/}"
 chmod 755 "$R"/usr/local/bin/mas-* 2>/dev/null || true
 chmod 440 "$R"/etc/sudoers.d/mas-welcome "$R"/etc/sudoers.d/10-mas-wheel 2>/dev/null || true
+# Any account may leave a note here when its desktop failed to start (see mas-wayland-session)
+mkdir -p "$R/var/lib/mas/flags"
+chmod 1777 "$R/var/lib/mas/flags"
 # A freshly installed system asks "Add a password or not?" at the first login (mas-welcome)
 if [[ -n "$R" ]]; then
   mkdir -p "$R/var/lib/mas"

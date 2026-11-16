@@ -46,6 +46,8 @@ full() {
   echo
   echo "== sddm log (last 40) =="
   journalctl -b -u sddm --no-pager 2>/dev/null | tail -n 40
+  echo '--- desktop start failures (login screen notes) ---'
+  head -n 8 /var/lib/mas/flags/plasma-failed-* 2>/dev/null | cut -c1-110
   echo '--- login theme ---'
   journalctl -b -t mas-theme --no-pager -o cat 2>/dev/null | tail -n 10
   echo

@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# mas-wayland-session - starts a Wayland desktop session exactly like SDDM's own wrapper does, and
+# remembers when the session ends within 2 minutes (= it failed to start). The login screen then shows
+# what happened and selects the simple XFCE desktop. mas-theme-check turns this wrapper on only when
+# it and SDDM's real wrapper exist.
+REAL="${MAS_REAL_WRAPPER:-/usr/share/sddm/scripts/wayland-session}"
+FLAGDIR="${MAS_FLAGDIR:-/var/lib/mas/flags}"
+LOG="${MAS_SESSION_LOG:-$HOME/.local/share/sddm/wayland-session.log}"
+user="$(id -un)"
+start="$(date +%s)"
+
+"$REAL" "$@"
+rc=$?
+
+dur=$(( $(date +%s) - start ))
+flag="$FLAGDIR/plasma-failed-$user"
+if [[ -d "$FLAGDIR" ]]; then
+  if [[ $dur -lt 120 ]]; then
+    {
+      echo "exit code $rc after ${dur}s. Last lines of the session log:"
+      tail -n 12 "$LOG" 2>/dev/null | cut -c1-160
+    } > "$flag.tmp" 2>/dev/null && chmod 644 "$flag.tmp" && mv -f "$flag.tmp" "$flag"
+  else
+    rm -f "$flag"
+  fi
+fi
+exit $rc
