@@ -23,6 +23,8 @@ Rectangle {
     property string failInfo: ""
     property int xfceIndex: -1
     property bool userPicked: false
+    property string firstUser: ""
+    property bool userKnown: false
 
     // ---------------------------------------------------------------- logic
     function checkPasswordless() {
@@ -137,6 +139,34 @@ Rectangle {
                 if (String(model.name).toLowerCase().indexOf("xfce") >= 0) {
                     root.xfceIndex = index
                 }
+            }
+        }
+    }
+
+    // If the remembered account does not exist (for example the temporary first-start account),
+    // select the first real account instead
+    Repeater {
+        model: userModel
+        delegate: Item {
+            width: 0
+            height: 0
+            Component.onCompleted: {
+                if (index === 0) {
+                    root.firstUser = model.name
+                }
+                if (model.name === root.selectedUser) {
+                    root.userKnown = true
+                }
+            }
+        }
+    }
+    Timer {
+        interval: 200
+        running: true
+        repeat: false
+        onTriggered: {
+            if (!root.userKnown && root.firstUser !== "") {
+                root.selectedUser = root.firstUser
             }
         }
     }

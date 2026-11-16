@@ -1,0 +1,92 @@
+#!/usr/bin/env bash
+# mas-oobe-apply create|finish - root helper for the first-start "create your account" screen (mas-oobe).
+#
+#   create   reads two lines from standard input: the account name, then the password (may be empty).
+#            Makes the first account (an administrator). A password is ALSO set as the root password and a
+#            recovery key is made and printed (only the key goes to standard output). An empty password
+#            means: no password for the account and none for root either.
+#   finish   removes the temporary first-start account and its sudo rule, and restarts the login screen.
+#
+# It works only while /var/lib/mas/oobe-pending exists, and only for the temporary first-start account
+# (or for root on a text console:  printf 'name\npassword\n' | mas-oobe-apply create ).
+set -u
+PENDING="${MAS_OOBE_PENDING:-/var/lib/mas/oobe-pending}"
+CREATED="${MAS_OOBE_CREATED:-/var/lib/mas/oobe-created}"
+SETUP_USER="${MAS_SETUP_USER:-mas-setup}"
+STORE="${MAS_RECOVERY_STORE:-/var/lib/mas/recovery}"
+RECOVERY="${MAS_RECOVERY:-/usr/local/bin/mas-recovery}"
+PASSWORDLESS="${MAS_PASSWORDLESS_TOOL:-/usr/local/bin/mas-passwordless}"
+GFX="${MAS_GFX:-/usr/local/bin/mas-gfx}"
+AUTOLOGIN="${MAS_OOBE_AUTOLOGIN:-/etc/sddm.conf.d/mas-default-autologin.conf}"
+SUDOERS="${MAS_OOBE_SUDOERS:-/etc/sudoers.d/mas-oobe}"
+SDDM_STATE="${MAS_SDDM_STATE:-/var/lib/sddm/state.conf}"
+XFCE_SESSION="${MAS_XFCE_SESSION:-/usr/share/xsessions/xfce.desktop}"
+PASSWD_FILE="${MAS_PASSWD:-/etc/passwd}"
+
+if [[ $EUID -ne 0 ]]; then echo "mas-oobe-apply: needs root" >&2; exit 1; fi
+if [[ -n "${SUDO_USER:-}" && "$SUDO_USER" != "$SETUP_USER" ]]; then
+  echo "mas-oobe-apply: only the first-start screen may use this" >&2; exit 1
+fi
+if [[ ! -e "$PENDING" ]]; then echo "mas-oobe-apply: the first-start step is already done" >&2; exit 1; fi
+
+case "${1:-}" in
+  create)
+    if [[ -e "$CREATED" ]]; then echo "mas-oobe-apply: the account was already created" >&2; exit 1; fi
+    IFS= read -r name
+    IFS= read -r pass || pass=""
+    if [[ ! "$name" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]]; then echo "mas-oobe-apply: bad account name" >&2; exit 2; fi
+    if getent passwd "$name" >/dev/null || getent group "$name" >/dev/null; then
+      echo "mas-oobe-apply: that name is already used" >&2; exit 2
+    fi
+    key=""
+    if [[ -n "$pass" ]]; then
+      # make the key first, so a failure leaves nothing half done
+      if ! key="$(MAS_RECOVERY_STORE="$STORE" "$RECOVERY" new --user "$name")" || [[ -z "$key" ]]; then
+        echo "mas-oobe-apply: could not make a recovery key" >&2; exit 1
+      fi
+    fi
+    if ! useradd -m -G wheel -s /bin/bash -c "$name" -- "$name"; then
+      rm -f "$STORE"; echo "mas-oobe-apply: could not create the account" >&2; exit 1
+    fi
+    chmod 700 "/home/$name"   # private: other accounts cannot open this folder
+    if [[ -n "$pass" ]]; then
+      if ! printf '%s:%s\nroot:%s\n' "$name" "$pass" "$pass" | chpasswd; then
+        userdel -r "$name" 2>/dev/null; rm -f "$STORE"
+        echo "mas-oobe-apply: could not set the password" >&2; exit 1
+      fi
+      "$PASSWORDLESS" remove "$name" 2>/dev/null || true
+    else
+      passwd -d "$name" >/dev/null
+      passwd -d root >/dev/null
+      rm -f "$STORE"
+      "$PASSWORDLESS" add "$name" 2>/dev/null || true   # the login screen then shows a Sign In button
+      # no automatic screen lock while the account has no password
+      mkdir -p "/home/$name/.config"
+      printf '[Daemon]\nAutolock=false\nLockOnResume=false\n' > "/home/$name/.config/kscreenlockerrc"
+      chown -R "$name:$name" "/home/$name/.config" 2>/dev/null || true
+    fi
+    : > "$CREATED"
+    if [[ -n "$key" ]]; then printf '%s\n' "$key"; fi
+    ;;
+  finish)
+    if [[ ! -e "$CREATED" ]]; then echo "mas-oobe-apply: no account was created yet" >&2; exit 1; fi
+    user="$(awk -F: '$3>=1000 && $3<60000 {print $1; exit}' "$PASSWD_FILE")"
+    # The login screen remembers who signed in last. Make that the new account (not the temporary one),
+    # and inside a virtual machine remember the simple desktop so the first login does not end black.
+    mkdir -p "$(dirname "$SDDM_STATE")"
+    {
+      echo "[Last]"
+      echo "User=$user"
+      mode="$("$GFX" status 2>/dev/null | sed -n 's/.*in use: \([a-z]*\).*/\1/p')"
+      if [[ "$mode" == xfce && -f "$XFCE_SESSION" ]]; then echo "Session=$XFCE_SESSION"; fi
+    } > "$SDDM_STATE"
+    rm -f "$AUTOLOGIN" "$SUDOERS" "$PENDING" "$CREATED"
+    # A moment later (so this screen can close): show the normal login screen and delete the temporary account
+    systemd-run --no-block --unit=mas-oobe-finish /bin/sh -c \
+      "sleep 3; systemctl restart sddm.service; sleep 5; userdel -rf $SETUP_USER" >/dev/null 2>&1 || true
+    ;;
+  *)
+    echo "usage: mas-oobe-apply create|finish" >&2
+    exit 1
+    ;;
+esac

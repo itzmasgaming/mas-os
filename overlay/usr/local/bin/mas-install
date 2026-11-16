@@ -17,11 +17,11 @@ Tips for the next screens:
     If it asks about snapshots, choose Snapper (this gives you restore points).
   - Network: choose NetworkManager.
   - Profile: Desktop > KDE Plasma (MAS replaces its look afterwards).
-  - User: you can create your own administrator account here, or skip it.
-    MAS always adds a default account called "mas" with NO password.
-    After the first start, open Start menu > Accounts to create your own account,
-    then you can delete "mas" from it.
-    (If archinstall insists on a password, set a root password and leave the user out.)
+  - User: do NOT create a user here. MAS asks you to create your account when it starts for the
+    first time, and the password you choose there also becomes the root (administrator) password.
+    If archinstall insists on a password, set a root password: you will only need it if the
+    first-start screen fails (then the new account can be made from a text console with
+    "mas-oobe-apply create"). MAS replaces that root password when you create your account.
   - At the end, when it offers to reboot or chroot, choose NOT to reboot yet.
     MAS is added when the installer window closes.
 

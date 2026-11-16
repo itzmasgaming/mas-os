@@ -62,41 +62,44 @@ chmod 440 "$R"/etc/sudoers.d/mas-welcome "$R"/etc/sudoers.d/10-mas-wheel 2>/dev/
 # Any account may leave a note here when its desktop failed to start (see mas-wayland-session)
 mkdir -p "$R/var/lib/mas/flags"
 chmod 1777 "$R/var/lib/mas/flags"
-# A freshly installed system asks "Add a password or not?" at the first login (mas-welcome)
-if [[ -n "$R" ]]; then
-  mkdir -p "$R/var/lib/mas"
-  : > "$R/var/lib/mas/firstrun-pending"
-fi
-
-if [[ -n "$R" ]]; then
-  # Fresh install only: the default account "mas" with NO password. It can create other accounts,
-  # and once you have another administrator account you can delete it (Start menu > Accounts).
-  # While it has no password it signs in by itself and can do administrator tasks.
-  # Setting a password for it (first-run screen) switches all of that off.
-  echo "==> Creating the default account 'mas' (no password)"
-  if ! in_root id -u mas >/dev/null 2>&1; then
-    in_root useradd -m -G wheel -s /bin/bash -c "MAS" mas
-    in_root passwd -d mas >/dev/null 2>&1 || true
-    # no automatic screen lock while the account has no password (the welcome screen removes this)
-    mkdir -p "$R/home/mas/.config"
-    printf '[Daemon]\nAutolock=false\nLockOnResume=false\n' > "$R/home/mas/.config/kscreenlockerrc"
-    in_root chown -R mas:mas /home/mas/.config
-    mkdir -p "$R/var/lib/mas" "$R/etc/sddm.conf.d"
-    : > "$R/var/lib/mas/default-open"
-    echo mas > "$R/var/lib/mas/passwordless"
-    chmod 644 "$R/var/lib/mas/passwordless"
-    printf 'mas ALL=(ALL:ALL) NOPASSWD: ALL\n' > "$R/etc/sudoers.d/mas-default-open"
-    chmod 440 "$R/etc/sudoers.d/mas-default-open"
-    sess=""
-    for s in plasma plasmawayland plasma-wayland; do
-      if [[ -f "$R/usr/share/wayland-sessions/$s.desktop" ]]; then sess="$s"; break; fi
-    done
-    {
-      echo "[Autologin]"
-      echo "User=mas"
-      if [[ -n "$sess" ]]; then echo "Session=$sess"; fi
-    } > "$R/etc/sddm.conf.d/mas-default-autologin.conf"
+# Every account is private, like on Windows: a home folder can be read only by its own account
+# (administrators can still reach it with sudo). New accounts get 0700 homes; existing homes are fixed too.
+if [[ -f "$R/etc/login.defs" ]]; then
+  if grep -q '^HOME_MODE' "$R/etc/login.defs"; then
+    sed -i 's/^HOME_MODE.*/HOME_MODE\t0700/' "$R/etc/login.defs"
+  else
+    printf 'HOME_MODE\t0700\n' >> "$R/etc/login.defs"
   fi
+fi
+for h in "$R"/home/*/; do [[ -d "$h" ]] && chmod 700 "$h"; done
+if [[ -n "$R" ]]; then
+  # Fresh install: NO account is created. The first start shows "Create your account" (mas-oobe), run by a
+  # temporary account "mas-setup" that signs in by itself. The password you choose there is also the root
+  # password. When it is done (mas-oobe-apply finish) the temporary account and its sudo rule are deleted.
+  echo "==> Preparing the first-start 'create your account' screen"
+  mkdir -p "$R/var/lib/mas" "$R/etc/sddm.conf.d"
+  if ! in_root id -u mas-setup >/dev/null 2>&1; then
+    in_root useradd -r -m -d /var/lib/mas-setup -s /bin/bash -c "MAS first start" mas-setup
+  fi
+  # this account has no password, so the screen must never lock itself during setup
+  mkdir -p "$R/var/lib/mas-setup/.config"
+  printf '[Daemon]\nAutolock=false\nLockOnResume=false\n' > "$R/var/lib/mas-setup/.config/kscreenlockerrc"
+  in_root chown -R mas-setup:mas-setup /var/lib/mas-setup/.config
+  : > "$R/var/lib/mas/oobe-pending"
+  rm -f "$R/var/lib/mas/oobe-created"
+  : > "$R/var/lib/mas/passwordless"
+  chmod 644 "$R/var/lib/mas/passwordless"
+  printf 'mas-setup ALL=(root) NOPASSWD: /usr/local/bin/mas-oobe-apply create, /usr/local/bin/mas-oobe-apply finish\n' > "$R/etc/sudoers.d/mas-oobe"
+  chmod 440 "$R/etc/sudoers.d/mas-oobe"
+  sess=""
+  for s in plasma plasmawayland plasma-wayland; do
+    if [[ -f "$R/usr/share/wayland-sessions/$s.desktop" ]]; then sess="$s"; break; fi
+  done
+  {
+    echo "[Autologin]"
+    echo "User=mas-setup"
+    if [[ -n "$sess" ]]; then echo "Session=$sess"; fi
+  } > "$R/etc/sddm.conf.d/mas-default-autologin.conf"
 fi
 
 echo "==> Turning on services"
@@ -148,4 +151,4 @@ if [[ -x "$R/usr/bin/plymouth-set-default-theme" || -x "$R/usr/bin/plymouthd" ]]
 fi
 
 echo
-echo "MAS OS is set up. Reboot to start it."
+echo "MAS OS is set up. Reboot to start it. The first start asks you to create your account."

@@ -1,5 +1,9 @@
 #!/bin/sh
 # mas-open-check - called by the login screen (PAM). Exit code 0 = "let this account in without a password".
-# True only for the default account "mas" while it is open (no password): the file /var/lib/mas/default-open
-# exists. It is removed when "mas" gets a password or is deleted.
-[ "${PAM_USER:-}" = "${MAS_DEFAULT_ACCOUNT:-mas}" ] && [ -e "${MAS_GATE:-/var/lib/mas/default-open}" ]
+# True only for the live account "mas" while it is open: the file /var/lib/mas/default-open exists AND the
+# account really has an empty password (so a password set with "passwd" switches this off too).
+u="${PAM_USER:-}"
+[ "$u" = "${MAS_DEFAULT_ACCOUNT:-mas}" ] && [ -e "${MAS_GATE:-/var/lib/mas/default-open}" ] || exit 1
+line="$(getent shadow "$u")" || exit 1
+hash="$(printf '%s' "$line" | cut -d: -f2)"
+[ -z "$hash" ]

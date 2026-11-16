@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# mas-oobe - the first screen of a freshly installed MAS: "Create your account", like Windows.
+# It runs only in the temporary first-start session (account mas-setup, see mas-apply) and only until
+# the first account exists. The password you choose is also the root password. No password = root has none.
+SETUP_USER="${MAS_SETUP_USER:-mas-setup}"
+PENDING="${MAS_OOBE_PENDING:-/var/lib/mas/oobe-pending}"
+CREATED="${MAS_OOBE_CREATED:-/var/lib/mas/oobe-created}"
+APPLY="${MAS_OOBE_APPLY:-/usr/local/bin/mas-oobe-apply}"
+TITLE="Welcome to MAS"
+
+if [[ "$(id -un)" != "$SETUP_USER" ]]; then exit 0; fi
+if [[ ! -e "$PENDING" ]]; then exit 0; fi
+# The account was already made but the computer was switched off before the last step: just finish
+if [[ -e "$CREATED" ]]; then sudo -n "$APPLY" finish; exit 0; fi
+command -v kdialog >/dev/null 2>&1 || exit 0
+sleep "${MAS_OOBE_DELAY:-5}"
+
+kdialog --title "$TITLE" --msgbox $'Welcome to MAS OS.\n\nLet us create your account.\n\nThe password you choose also protects the administrator (root) account. You will get a recovery key in case you forget it.\n\nPress OK to start.'
+
+while true; do
+  name="$(kdialog --title "$TITLE" --inputbox $'Name for your account\n(small letters and numbers, no spaces):')" || continue
+  if [[ ! "$name" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]]; then
+    kdialog --title "$TITLE" --sorry "That name is not allowed. Start with a small letter and use only small letters, numbers, - and _."
+    continue
+  fi
+  if getent passwd "$name" >/dev/null || getent group "$name" >/dev/null; then
+    kdialog --title "$TITLE" --sorry "The name '$name' is already used. Choose another one."
+    continue
+  fi
+
+  p1=""
+  while true; do
+    p1="$(kdialog --title "$TITLE" --password "Choose a password for '$name' (leave empty for no password):")" || continue 2
+    if [[ -z "$p1" ]]; then
+      if kdialog --title "$TITLE" --yes-label "No password" --no-label "Go back" \
+           --yesno $'Skip the password?\n\nWithout a password, anyone who starts this computer can use it, and the administrator (root) account will have no password either.'; then
+        break
+      fi
+      continue
+    fi
+    p2="$(kdialog --title "$TITLE" --password "Type the same password again:")" || continue
+    if [[ "$p1" == "$p2" ]]; then break; fi
+    kdialog --title "$TITLE" --sorry "The two passwords are different. Try again."
+  done
+
+  # standard input: the password never appears on a command line (other users could see it with "ps")
+  if key="$(printf '%s\n%s\n' "$name" "$p1" | sudo -n "$APPLY" create)"; then
+    if [[ -n "$key" ]]; then
+      kdialog --title "$TITLE" --msgbox $'Your account is ready.\n\nNext you get your RECOVERY KEY. Save it: it is the only way to reset a forgotten password.'
+      if ! printf '%s\n' "$key" | "${MAS_SHOWKEY:-/usr/local/bin/mas-showkey}" - >/dev/null 2>&1; then
+        keyfile="$(umask 077; mktemp)"
+        printf 'Your recovery key (write it down):\n\n%s\n' "$key" > "$keyfile"
+        kdialog --title "$TITLE" --textbox "$keyfile" 480 220
+        rm -f "$keyfile"
+      fi
+    fi
+    sudo -n "$APPLY" finish
+    kdialog --title "$TITLE" --msgbox $'All set. The sign-in screen appears in a moment.'
+    exit 0
+  fi
+  kdialog --title "$TITLE" --error $'Could not create the account. Try again.'
+done

@@ -13,6 +13,7 @@ RECOVERY="${MAS_RECOVERY:-/usr/local/bin/mas-recovery}"
 if [[ $EUID -ne 0 ]]; then echo "mas-setpass: needs root" >&2; exit 1; fi
 who="${SUDO_USER:-}"
 if [[ -z "$who" || "$who" == root ]]; then echo "mas-setpass: run it with sudo from a normal user" >&2; exit 1; fi
+if [[ "$who" != "${MAS_DEFAULT_ACCOUNT:-mas}" ]]; then echo "mas-setpass: only the live account may use this" >&2; exit 1; fi
 if [[ ! -e "$PENDING" ]]; then echo "mas-setpass: the first-run step is already done" >&2; exit 1; fi
 
 case "${1:-}" in

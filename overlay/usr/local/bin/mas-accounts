@@ -74,6 +74,7 @@ create_account() {
     sorry "Could not create the account."
     return 0
   fi
+  $SUDO chmod 700 "/home/$name"   # private: other accounts cannot open this folder
   if [[ -n "$p1" ]]; then
     printf '%s:%s\n' "$name" "$p1" | $SUDO chpasswd
     $SUDO /usr/local/bin/mas-passwordless remove "$name"

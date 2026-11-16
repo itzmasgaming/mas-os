@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=MAS first start
+Exec=/usr/local/bin/mas-oobe
+NoDisplay=true
+OnlyShowIn=KDE;XFCE;
+X-KDE-autostart-after=panel

@@ -16,7 +16,7 @@ cat <<'EOF'
    ------
    How should the desktop start?
 
-     1   Automatic       (recommended)
+     1   Automatic       (recommended: simple desktop in a VM, Plasma on a real PC)
      2   Safe            Plasma drawn by the CPU. Try this if the screen goes black.
      3   OpenGL on CPU   Plasma, a bit faster than Safe
      4   Graphics card   Plasma for real computers

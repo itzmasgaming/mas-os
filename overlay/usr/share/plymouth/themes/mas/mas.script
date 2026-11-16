@@ -1,62 +1,40 @@
-# MAS boot screen
-# Dark gradient, MAS logo with a breathing glow, a spinning comet ring around it,
-# and a smooth progress bar underneath. Everything fades in on start.
+# MAS boot screen - Windows style: black screen, the MAS logo in the middle, and a ring of
+# white dots that chase each other around underneath while the computer starts.
 
-Window.SetBackgroundTopColor(0.02, 0.03, 0.06);
-Window.SetBackgroundBottomColor(0.05, 0.09, 0.18);
+Window.SetBackgroundTopColor(0, 0, 0);
+Window.SetBackgroundBottomColor(0, 0, 0);
 
 screen.w = Window.GetWidth();
 screen.h = Window.GetHeight();
 screen.cx = Window.GetX() + screen.w / 2;
-screen.cy = Window.GetY() + screen.h / 2 - screen.h * 0.04;
+screen.cy = Window.GetY() + screen.h / 2;
 
-# scale everything with the screen height (designed for 1080p), never above 1.4x
-ui.scale = screen.h / 1080;
-if (ui.scale > 1.4) ui.scale = 1.4;
-if (ui.scale < 0.5) ui.scale = 0.5;
-
-# ---- glow behind the logo ----
-glow.raw = Image("glow.png");
-glow.image = glow.raw.Scale(glow.raw.GetWidth() * ui.scale, glow.raw.GetHeight() * ui.scale);
-glow.sprite = Sprite(glow.image);
-glow.sprite.SetPosition(screen.cx - glow.image.GetWidth() / 2,
-                        screen.cy - glow.image.GetHeight() / 2, 1);
-glow.sprite.SetOpacity(0);
-
-# ---- logo ----
+# ---- logo: about 24% of the screen height, a little above the middle ----
 logo.raw = Image("logo.png");
-logo.image = logo.raw.Scale(logo.raw.GetWidth() * ui.scale, logo.raw.GetHeight() * ui.scale);
+logo.scale = (screen.h * 0.24) / logo.raw.GetHeight();
+logo.image = logo.raw.Scale(logo.raw.GetWidth() * logo.scale, logo.raw.GetHeight() * logo.scale);
 logo.sprite = Sprite(logo.image);
-logo.sprite.SetPosition(screen.cx - logo.image.GetWidth() / 2,
-                        screen.cy - logo.image.GetHeight() / 2, 10);
+logo.x = screen.cx - logo.image.GetWidth() / 2;
+logo.y = screen.cy - logo.image.GetHeight() / 2 - screen.h * 0.06;
+logo.sprite.SetPosition(logo.x, logo.y, 10);
 logo.sprite.SetOpacity(0);
 
-# ---- spinning ring ----
-ring.raw = Image("ring.png");
-ring.image = ring.raw.Scale(ring.raw.GetWidth() * ui.scale, ring.raw.GetHeight() * ui.scale);
-ring.sprite = Sprite(ring.image);
-ring.sprite.SetPosition(screen.cx - ring.image.GetWidth() / 2,
-                        screen.cy - ring.image.GetHeight() / 2, 5);
-ring.sprite.SetOpacity(0);
+# ---- spinner: 6 dots on a small circle under the logo ----
+spin.count = 6;
+spin.radius = screen.h * 0.022;
+spin.cx = screen.cx;
+spin.cy = logo.y + logo.image.GetHeight() + screen.h * 0.085;
+spin.dot_raw = Image("dot.png");
+spin.dot_size = screen.h * 0.0085;
+if (spin.dot_size < 5) spin.dot_size = 5;
+spin.dot_img = spin.dot_raw.Scale(spin.dot_size, spin.dot_size);
+for (i = 0; i < spin.count; i++)
+  {
+    spin.dot[i] = Sprite(spin.dot_img);
+    spin.dot[i].SetOpacity(0);
+    spin.dot[i].SetPosition(spin.cx, spin.cy, 10);
+  }
 
-# ---- progress bar ----
-bar.track_raw = Image("bar_track.png");
-bar.fill_raw = Image("bar_fill.png");
-bar.w = bar.track_raw.GetWidth() * ui.scale;
-bar.h = bar.track_raw.GetHeight() * ui.scale;
-bar.x = screen.cx - bar.w / 2;
-bar.y = screen.cy + ring.image.GetHeight() / 2 + 46 * ui.scale;
-
-bar.track = Sprite(bar.track_raw.Scale(bar.w, bar.h));
-bar.track.SetPosition(bar.x, bar.y, 10);
-bar.track.SetOpacity(0);
-
-bar.fill = Sprite(bar.fill_raw.Scale(bar.h, bar.h));
-bar.fill.SetPosition(bar.x, bar.y, 11);
-bar.fill.SetOpacity(0);
-
-progress.target = 0;   # real boot progress (0..1) reported by plymouth
-progress.shown = 0;    # what we draw; eased toward the target, never goes backwards
 frame = 0;
 
 fun refresh_callback ()
@@ -64,53 +42,40 @@ fun refresh_callback ()
     frame++;
     t = frame / 50;    # roughly seconds (50 fps)
 
-    # fade everything in over the first ~0.8s
-    fade = frame / 40;
+    fade = frame / 30;
     if (fade > 1) fade = 1;
+    logo.sprite.SetOpacity(fade);
 
-    # logo breathes gently, glow breathes a bit more
-    logo.sprite.SetOpacity(fade * (0.88 + 0.12 * Math.Sin(t * 2.2)));
-    glow.sprite.SetOpacity(fade * (0.55 + 0.35 * Math.Sin(t * 2.2 - 0.6)));
-
-    # ring spins
-    spun = ring.image.Rotate(t * 3.6);
-    ring.sprite.SetImage(spun);
-    ring.sprite.SetPosition(screen.cx - spun.GetWidth() / 2,
-                            screen.cy - spun.GetHeight() / 2, 5);
-    ring.sprite.SetOpacity(fade * 0.95);
-
-    # progress: ease toward the target, and creep forward a little so it never looks frozen
-    goal = progress.target;
-    if (goal < progress.shown) goal = progress.shown;
-    progress.shown = progress.shown + (goal - progress.shown) * 0.06;
-    creep = (0.92 - progress.shown) * 0.0006;
-    if (creep > 0) progress.shown = progress.shown + creep;
-    if (progress.shown > 1) progress.shown = 1;
-
-    fill_w = bar.w * progress.shown;
-    if (fill_w < bar.h) fill_w = bar.h;
-    bar.fill.SetImage(bar.fill_raw.Scale(fill_w, bar.h));
-    bar.track.SetOpacity(fade);
-    bar.fill.SetOpacity(fade);
+    for (i = 0; i < spin.count; i++)
+      {
+        # every dot runs the same loop, a little later than the one before it; each loop starts
+        # slow, speeds up, and slows down again, like the Windows dots
+        p = t / 2.4 - i * 0.055;
+        p = p - Math.Int(p);
+        if (p < 0) p = p + 1;
+        ease = p * p * (3 - 2 * p);
+        a = -Math.Pi / 2 + ease * 2 * Math.Pi;
+        x = spin.cx + spin.radius * Math.Cos(a) - spin.dot_size / 2;
+        y = spin.cy + spin.radius * Math.Sin(a) - spin.dot_size / 2;
+        spin.dot[i].SetPosition(x, y, 10);
+        # a short pause between loops: dots hide at the very start and end of the loop
+        o = 1;
+        if (p < 0.03) o = p / 0.03;
+        if (p > 0.97) o = (1 - p) / 0.03;
+        spin.dot[i].SetOpacity(fade * o);
+      }
   }
-
 Plymouth.SetRefreshFunction (refresh_callback);
 
-fun boot_progress_callback (time, progress_value)
-  {
-    progress.target = progress_value;
-  }
-Plymouth.SetBootProgressFunction (boot_progress_callback);
-
-# A line of text under the bar (used for "Forgot your password? Press R")
+# A line of text under the dots (used for "Forgot your password? Press R")
 message_sprite = Sprite();
 fun display_message_callback (text)
   {
-    img = Image.Text(text, 0.78, 0.85, 1.0);
+    img = Image.Text(text, 0.8, 0.8, 0.8);
     message_sprite.SetImage(img);
     message_sprite.SetOpacity(1);
     message_sprite.SetPosition(screen.cx - img.GetWidth() / 2,
-                               bar.y + bar.h + 36 * ui.scale, 20);
+                               spin.cy + screen.h * 0.07, 20);
   }
 fun hide_message_callback (text)
   {

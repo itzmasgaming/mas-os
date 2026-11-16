@@ -7,7 +7,7 @@
 #   mas-gfx soft           draw with the CPU through OpenGL software rendering (llvmpipe)
 #   mas-gfx basic          draw with the CPU, no OpenGL at all (slowest, most reliable Plasma mode)
 #   mas-gfx xfce           the simple XFCE desktop instead of Plasma (works in every virtual machine)
-#   mas-gfx auto           Plasma; basic drawing inside a virtual machine, normal on a real computer (default)
+#   mas-gfx auto           inside a virtual machine: the XFCE desktop (basic Plasma if XFCE is missing); on a real computer: Plasma with the graphics card (default)
 #   mas-gfx status         show the current choice
 #
 # Order of choice: the boot option  mas.gfx=normal|soft|basic|xfce|auto  wins, then /etc/mas/gfx-mode, then auto.
@@ -39,9 +39,15 @@ wanted_mode() {
   echo auto
 }
 
-resolve() { # auto -> basic or normal (xfce stays xfce)
+resolve() { # auto -> xfce (or basic) inside a virtual machine, normal on a real computer
   if [[ "$1" != auto ]]; then echo "$1"; return; fi
-  if systemd-detect-virt --vm --quiet 2>/dev/null; then echo basic; else echo normal; fi
+  if systemd-detect-virt --vm --quiet 2>/dev/null; then
+    # Plasma (Wayland only) is not reliable on virtual graphics cards, so a VM gets the simple XFCE
+    # desktop automatically when it is installed; otherwise Plasma drawn by the CPU.
+    if [[ -f "$ROOT/usr/share/xsessions/xfce.desktop" ]]; then echo xfce; else echo basic; fi
+  else
+    echo normal
+  fi
 }
 
 vars_for() { # prints NAME=value lines for a mode

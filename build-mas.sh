@@ -136,7 +136,7 @@ if [[ $HAVE_PLYMOUTH -eq 1 ]]; then
   # "quiet splash" in the boot menus (BIOS syslinux, grub, UEFI systemd-boot)
   for f in "$PROFILE"/syslinux/*.cfg "$PROFILE"/grub/*.cfg "$PROFILE"/efiboot/loader/entries/*.conf; do
     if [[ -f "$f" ]] && grep -q 'archisobasedir=' "$f" && ! grep -q 'splash' "$f"; then
-      sed -i 's/archisobasedir=/quiet splash loglevel=3 archisobasedir=/' "$f"
+      sed -i 's/archisobasedir=/quiet splash loglevel=3 vt.global_cursor_default=0 rd.udev.log_level=3 systemd.show_status=false rd.systemd.show_status=false archisobasedir=/' "$f"
     fi
   done
 fi
@@ -148,7 +148,7 @@ PERMS="$WORK/perms.txt"
   echo '  ["/etc/sudoers.d/mas-welcome"]="0:0:0440"'
   echo '  ["/etc/sudoers.d/10-mas-wheel"]="0:0:0440"'
   echo '  ["/var/lib/mas/flags"]="0:0:1777"'
-  echo '  ["/home/mas"]="1000:1000:0750"'
+  echo '  ["/home/mas"]="1000:1000:0700"'
   echo '  ["/home/mas/.config"]="1000:1000:0755"'
   echo '  ["/home/mas/.config/kscreenlockerrc"]="1000:1000:0644"'
   echo '  ["/home/mas/Desktop"]="1000:1000:0755"'
