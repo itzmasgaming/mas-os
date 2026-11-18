@@ -3,7 +3,14 @@
 plymouth
 # Nicer font for the setup screen (falls back to Noto Sans)
 inter-font
-# More Wine helpers
+# More Wine helpers (32-bit libraries; names change in Arch from time to time)
+lib32-gnutls
+lib32-libpulse
+lib32-alsa-plugins
+lib32-openal
+lib32-giflib
+lib32-libpng
+lib32-libjpeg-turbo
 lib32-v4l-utils
 lib32-sdl2-compat
 # Restore point entries in the boot menu, and a restore point before/after every pacman update

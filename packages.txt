@@ -57,10 +57,7 @@ wine-mono
 wine-gecko
 winetricks
 cabextract
-lib32-gnutls
-lib32-libpulse
-lib32-alsa-plugins
-lib32-openal
+# (32-bit helper libraries for Wine are in optional.txt)
 
 # Archives (.zip, .rar)
 unzip

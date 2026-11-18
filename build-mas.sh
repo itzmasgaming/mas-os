@@ -53,6 +53,16 @@ if ! grep -q '^\[multilib\]' "$PROFILE/pacman.conf"; then
 fi
 
 echo "==> Choosing packages"
+# Check names against the ISO's own repositories (with multilib), not the build machine's
+pacman --config "$PROFILE/pacman.conf" -Sy >/dev/null 2>&1 || pacman --config "$PROFILE/pacman.conf" -Sy
+have_pkg() { pacman --config "$PROFILE/pacman.conf" -Si "$1" >/dev/null 2>&1; }
+missing=()
+while read -r pkg; do have_pkg "$pkg" || missing+=("$pkg"); done < <(grep -vE '^\s*(#|$)' "$HERE/packages.txt")
+if [[ ${#missing[@]} -gt 0 ]]; then
+  echo "These packages from packages.txt do not exist in the Arch repositories: ${missing[*]}" >&2
+  echo "Move them to optional.txt or fix the names." >&2
+  exit 1
+fi
 PKGFILE="$PROFILE/packages.x86_64"
 if [[ -n "$(tail -c1 "$PKGFILE")" ]]; then echo >> "$PKGFILE"; fi
 {
@@ -60,13 +70,13 @@ if [[ -n "$(tail -c1 "$PKGFILE")" ]]; then echo >> "$PKGFILE"; fi
   grep -vE '^\s*(#|$)' "$HERE/packages.txt"
 } >> "$PKGFILE"
 # VirtualBox: the full guest tools (clipboard, window resizing) replace the "-nox" ones from the base ISO
-if pacman -Si virtualbox-guest-utils >/dev/null 2>&1; then
+if have_pkg virtualbox-guest-utils; then
   sed -i '/^virtualbox-guest-utils-nox$/d' "$PKGFILE"
   echo "virtualbox-guest-utils" >> "$PKGFILE"
 fi
 HAVE_PLYMOUTH=0
 while read -r pkg; do
-  if pacman -Si "$pkg" >/dev/null 2>&1; then
+  if have_pkg "$pkg"; then
     echo "$pkg" >> "$PKGFILE"
     if [[ "$pkg" == "plymouth" ]]; then HAVE_PLYMOUTH=1; fi
   else
