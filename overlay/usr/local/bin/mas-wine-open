@@ -30,31 +30,56 @@ if [[ $SANDBOX -eq 0 ]]; then
   exit $?
 fi
 
-# --- sandbox: empty Wine folder in a temporary place, removed afterwards
+# --- sandbox: empty Wine folder in a temporary place, removed afterwards.
+# The program gets: its own copy of the file, an empty home, read-only system files, its own screen (Xephyr),
+# the sound socket, and NO network (set MAS_WINEBOX_NET=1 to allow it). It does not get your files, the desktop
+# message bus, or a view of your other windows.
+command -v bwrap >/dev/null 2>&1 || { say "The sandbox needs 'bubblewrap', which is not installed."; exit 1; }
+if ! command -v Xephyr >/dev/null 2>&1; then
+  command -v zenity >/dev/null 2>&1 && zenity --question --no-wrap --title "MAS Sandbox" \
+    --text "The private screen (Xephyr) is not installed, so this program could see your other windows.\n\nRun it anyway?" || exit 1
+  SHARE_X=1
+else
+  SHARE_X=0
+fi
 T="$(mktemp -d /var/tmp/mas-winebox.XXXXXX)"
-trap 'rm -rf "$T"' EXIT
+XPID=""
+cleanup() { [[ -n "$XPID" ]] && kill "$XPID" 2>/dev/null; rm -rf "$T"; }   # no "wineserver -k" here: on the host it would hit the real ~/.wine
+trap cleanup EXIT
 mkdir -p "$T/home" "$T/work"
 cp -- "$FILE" "$T/work/" || { say "Could not copy the program."; exit 1; }
 NAME="$(basename -- "$FILE")"
-export WINEPREFIX="$T/home/.wine" WINEDEBUG=-all
-if command -v bwrap >/dev/null 2>&1; then
-  ARGS=(--ro-bind / / --dev-bind /dev /dev --proc /proc --tmpfs /tmp --tmpfs /run --tmpfs "$HOME"
-        --bind "$T" "$T" --unshare-ipc --unshare-pid --die-with-parent --setenv HOME "$T/home" --setenv WINEPREFIX "$WINEPREFIX")
+
+ARGS=(--unshare-all --new-session --die-with-parent
+      --ro-bind /usr /usr --ro-bind /etc /etc --proc /proc --dev /dev --tmpfs /tmp
+      --bind "$T/home" "$T/home" --bind "$T/work" "$T/work"
+      --setenv HOME "$T/home" --setenv WINEPREFIX "$T/home/.wine" --setenv WINEDEBUG -all
+      --setenv PATH /usr/bin:/usr/local/bin --chdir "$T/work")
+for d in /bin /sbin /lib /lib64; do [[ -e "$d" ]] && ARGS+=(--symlink usr"$d" "$d"); done
+[[ -d /dev/dri ]] && ARGS+=(--dev-bind /dev/dri /dev/dri)                 # graphics
+[[ "${MAS_WINEBOX_NET:-0}" == 1 ]] && ARGS+=(--share-net)
+# sound: only the audio socket, not the whole session folder
+PSOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pulse/native"
+if [[ -S "$PSOCK" ]]; then ARGS+=(--ro-bind "$PSOCK" /tmp/pulse-native --setenv PULSE_SERVER unix:/tmp/pulse-native); fi
+
+if [[ $SHARE_X -eq 1 ]]; then
+  DISP="${DISPLAY:-:0}"
   [[ -d /tmp/.X11-unix ]] && ARGS+=(--ro-bind /tmp/.X11-unix /tmp/.X11-unix)
-  [[ -n "${XAUTHORITY:-}" && -e "${XAUTHORITY:-}" ]] && ARGS+=(--ro-bind "$XAUTHORITY" "$XAUTHORITY")
-  [[ -d "/run/user/$(id -u)" ]] && ARGS+=(--ro-bind "/run/user/$(id -u)" "/run/user/$(id -u)")
-  cd "$T/work" || exit 1
-  case "${NAME,,}" in
-    *.msi) bwrap "${ARGS[@]}" wine msiexec /i "$T/work/$NAME" ;;
-    *.bat) bwrap "${ARGS[@]}" wine cmd /c "$T/work/$NAME" ;;
-    *)     bwrap "${ARGS[@]}" wine start /wait /unix "$T/work/$NAME" ;;
-  esac
+  [[ -n "${XAUTHORITY:-}" && -e "${XAUTHORITY:-}" ]] && ARGS+=(--ro-bind "$XAUTHORITY" "$XAUTHORITY" --setenv XAUTHORITY "$XAUTHORITY")
 else
-  cd "$T/work" || exit 1
-  case "${NAME,,}" in
-    *.msi) wine msiexec /i "$NAME" ;;
-    *.bat) wine cmd /c "$NAME" ;;
-    *)     wine start /wait /unix "$NAME" ;;
-  esac
+  # a private X server shown as one window; only its own socket goes into the sandbox
+  N=90; while [[ -e "/tmp/.X11-unix/X$N" ]]; do N=$((N + 1)); done
+  Xephyr ":$N" -screen 1280x800 -resizeable -title "MAS Sandbox (private screen)" -nolisten tcp >/dev/null 2>&1 &
+  XPID=$!
+  for _ in $(seq 1 50); do [[ -S "/tmp/.X11-unix/X$N" ]] && break; sleep 0.1; done
+  [[ -S "/tmp/.X11-unix/X$N" ]] || { say "Could not start the private screen."; exit 1; }
+  ARGS+=(--ro-bind "/tmp/.X11-unix/X$N" "/tmp/.X11-unix/X$N")
+  DISP=":$N"
 fi
-wineserver -k >/dev/null 2>&1 || true
+ARGS+=(--setenv DISPLAY "$DISP")
+
+case "${NAME,,}" in
+  *.msi) bwrap "${ARGS[@]}" wine msiexec /i "$T/work/$NAME" ;;
+  *.bat) bwrap "${ARGS[@]}" wine cmd /c "$T/work/$NAME" ;;
+  *)     bwrap "${ARGS[@]}" wine start /wait /unix "$T/work/$NAME" ;;
+esac

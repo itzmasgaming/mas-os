@@ -1,6 +1,7 @@
 [Unit]
 Description=MAS: watch the login screen after it starts
 After=sddm.service
+ConditionPathExists=!/run/archiso
 
 [Service]
 # Type=simple: it keeps watching for a while but does not hold up the boot

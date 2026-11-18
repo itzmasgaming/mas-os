@@ -12,6 +12,7 @@ for _ in $(seq 1 15); do
     touch "$FLAG"
     logger -t mas-theme "the MAS login screen failed; switching to the standard one" 2>/dev/null || true
     "$CHECK"
+    [[ -e /run/mas-installing ]] && exit 0
     systemctl restart sddm.service
     exit 0
   fi

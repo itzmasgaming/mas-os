@@ -37,7 +37,11 @@ mkdir -p "$(dirname "$LOG")"
 : > "$LOG"
 if [[ $WANT_PW -eq 1 ]]; then IFS= read -r PASS || PASS=""; fi
 
-say()  { printf 'PROGRESS %s %s\n' "$1" "$2"; printf '[%s] %s\n' "$1" "$2" >> "$LOG"; }
+# the setup window may close or crash: never die from a closed pipe or a hang-up
+trap '' PIPE HUP
+: > /run/mas-installing 2>/dev/null || true                      # tells the login-screen guard not to restart anything now
+trap 'rm -f /run/mas-installing' EXIT
+say()  { printf 'PROGRESS %s %s\n' "$1" "$2" 2>/dev/null || true; printf '[%s] %s\n' "$1" "$2" >> "$LOG"; }
 note() { printf '%s\n' "$*" >> "$LOG"; }
 
 cleanup() {
@@ -288,7 +292,7 @@ must "Could not write the boot menu." CH grub-mkconfig -o /boot/grub/grub.cfg
 say 97 "Finishing..."
 cleanup
 note "install finished"
-if [[ -n "$KEY" ]]; then echo "KEY $KEY"; fi
+if [[ -n "$KEY" ]]; then echo "KEY $KEY" 2>/dev/null || true; fi
 say 100 "Done"
-echo DONE
+echo DONE 2>/dev/null || true
 exit 0

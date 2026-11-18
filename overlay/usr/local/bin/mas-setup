@@ -269,6 +269,9 @@ class SetupWindow(Gtk.ApplicationWindow):
         self.log_lines = []
         self.finished = False
         self.error_text = ""
+        self.installing = False
+        # the window cannot be closed while the disk is being written
+        self.connect("close-request", lambda _w: bool(self.installing))
 
         root = Gtk.Overlay()
         self.set_child(root)
@@ -632,6 +635,7 @@ class SetupWindow(Gtk.ApplicationWindow):
         self.key = ""
         self.finished = False
         self.error_text = ""
+        self.installing = True
         self.fail_label.set_visible(False)
         self.done_box.set_visible(False)
         self.prog_box.set_visible(True)
@@ -644,7 +648,8 @@ class SetupWindow(Gtk.ApplicationWindow):
             cmd = [sys.executable, os.path.abspath(__file__), "--fake-installer", mode]
         try:
             self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                         stderr=subprocess.STDOUT, text=True, bufsize=1)
+                                         stderr=subprocess.STDOUT, text=True, bufsize=1,
+                                         start_new_session=True)   # not tied to this window
             if self.use_password and not FAKE:
                 self.proc.stdin.write(self.password + "\n")
             self.proc.stdin.close()
@@ -678,6 +683,7 @@ class SetupWindow(Gtk.ApplicationWindow):
         return False
 
     def on_exit(self, rc):
+        self.installing = False
         if self.finished and rc == 0:
             self.show_done()
         else:

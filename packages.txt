@@ -80,6 +80,7 @@ gtk4
 
 # Throw-away space for "Run in Sandbox" on a Windows program
 bubblewrap
+xorg-server-xephyr
 
 # Restore points (Btrfs)
 btrfs-progs
