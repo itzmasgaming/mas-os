@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Ubuntu LTS
+Comment=
+Exec=/usr/local/bin/mas-ubuntu
+Icon=mas-ubuntu
+Terminal=false
+StartupNotify=false

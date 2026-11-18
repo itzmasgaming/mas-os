@@ -94,6 +94,7 @@ rm -f "$AIR/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"
 mkdir -p "$AIR/var/lib/mas" "$AIR/home/mas"
 # Settings that XFCE's own packages also ship (the theme) go in the account's home, not in /etc,
 # otherwise pacman stops with "conflicting files". New accounts get them through /etc/skel.
+chmod 0755 "$AIR"/etc/skel/Desktop/*.desktop   # XFCE only starts desktop launchers that are executable
 cp -a "$AIR/etc/skel/." "$AIR/home/mas/"
 # The live account "mas" has no password and is never asked for an administrator password
 : > "$AIR/var/lib/mas/default-open"
@@ -162,10 +163,12 @@ PERMS="$WORK/perms.txt"
 {
   echo '  ["/etc/sudoers.d/mas-live"]="0:0:0440"'
   echo '  ["/etc/sudoers.d/10-mas-wheel"]="0:0:0440"'
+  echo '  ["/etc/sudoers.d/20-mas-update"]="0:0:0440"'
+  for f in "$AIR"/etc/skel/Desktop/*.desktop; do echo "  [\"/etc/skel/Desktop/$(basename "$f")\"]=\"0:0:0755\""; done
   echo '  ["/home/mas"]="1000:1000:0700"'
   while IFS= read -r p; do
     rel="/home/mas/${p#"$AIR"/home/mas/}"
-    if [[ -d "$p" ]]; then echo "  [\"$rel\"]=\"1000:1000:0755\""; else echo "  [\"$rel\"]=\"1000:1000:0644\""; fi
+    if [[ -d "$p" || "$p" == */Desktop/*.desktop ]]; then echo "  [\"$rel\"]=\"1000:1000:0755\""; else echo "  [\"$rel\"]=\"1000:1000:0644\""; fi
   done < <(find "$AIR/home/mas" -mindepth 1)
   for f in "$HERE"/overlay/usr/local/bin/*; do
     echo "  [\"/usr/local/bin/$(basename "$f")\"]=\"0:0:0755\""

@@ -228,7 +228,7 @@ say 84 "Turning on services..."
 rm -f "$MNT/etc/machine-id"
 CH systemd-machine-id-setup >>"$LOG" 2>&1 || true   # a real machine id, so the system does not ask first-boot questions
 for u in sddm NetworkManager nftables systemd-timesyncd fstrim.timer mas-keyring mas-theme-check mas-theme-guard \
-         mas-boot-prompt snapper-timeline.timer snapper-cleanup.timer grub-btrfs.path vboxservice qemu-guest-agent vmtoolsd; do
+         mas-boot-prompt mas-update.timer snapper-timeline.timer snapper-cleanup.timer grub-btrfs.path vboxservice qemu-guest-agent vmtoolsd; do
   systemctl --root="$MNT" enable "$u" >>"$LOG" 2>&1 || note "(could not enable $u)"
 done
 ln -sf /usr/lib/systemd/system/graphical.target "$MNT/etc/systemd/system/default.target"

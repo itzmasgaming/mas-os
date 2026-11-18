@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Windows programs (Wine)
+Comment=Run a .exe or .msi
+Exec=/usr/local/bin/mas-wine-open %f
+Icon=mas-windows
+Terminal=false
+Categories=System;
+MimeType=application/x-ms-dos-executable;application/vnd.microsoft.portable-executable;application/x-msi;

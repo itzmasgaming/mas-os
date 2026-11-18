@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<actions>
+<action>
+  <icon>wine</icon>
+  <name>Open with Wine</name>
+  <submenu></submenu>
+  <unique-id>mas-wine-1</unique-id>
+  <command>/usr/local/bin/mas-wine-open %f</command>
+  <description>Run this Windows program with Wine</description>
+  <range>*</range>
+  <patterns>*.exe;*.EXE;*.msi;*.MSI;*.bat;*.BAT</patterns>
+  <other-files/>
+  <directories/>
+  <audio-files/><image-files/><text-files/><video-files/>
+</action>
+<action>
+  <icon>mas-sandbox</icon>
+  <name>Run in Sandbox</name>
+  <submenu></submenu>
+  <unique-id>mas-sandbox-1</unique-id>
+  <command>/usr/local/bin/mas-wine-open --sandbox %f</command>
+  <description>Run this Windows program in a throw-away space (erased when it closes)</description>
+  <range>*</range>
+  <patterns>*.exe;*.EXE;*.msi;*.MSI;*.bat;*.BAT</patterns>
+  <other-files/>
+</action>
+</actions>

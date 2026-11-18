@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+"""mas-appearance - dark / light mode, wallpaper and window effects for the MAS desktop.
+
+  mas-appearance apply            apply the saved choice (runs at every login)
+  mas-appearance toggle           switch dark <-> light
+  mas-appearance mode dark|light
+  mas-appearance wallpaper mas|mountains|midnight|aurora|/path/to/picture
+  mas-appearance effects on|off   rounded corners and shadows (turn off on very slow computers)
+  mas-appearance show             print the current choice
+"""
+import json, os, subprocess, sys, time
+
+SHARE = os.environ.get('MAS_SHARE', '/usr/share/mas')
+CONF = os.path.join(os.environ.get('XDG_CONFIG_HOME', os.path.expanduser('~/.config')), 'mas', 'appearance.json')
+DEFAULT = {'mode': 'dark', 'wallpaper': 'mas', 'custom': '', 'effects': True}
+BUILTIN = ('mas', 'mountains', 'midnight', 'aurora')
+
+
+def load():
+    try:
+        d = json.load(open(CONF))
+    except Exception:
+        d = {}
+    out = dict(DEFAULT); out.update({k: v for k, v in d.items() if k in DEFAULT})
+    if out['mode'] not in ('dark', 'light'): out['mode'] = 'dark'
+    return out
+
+
+def save(d):
+    os.makedirs(os.path.dirname(CONF), exist_ok=True)
+    tmp = CONF + '.tmp'
+    json.dump(d, open(tmp, 'w')); os.replace(tmp, CONF)
+
+
+def run(*a):
+    try:
+        return subprocess.run(a, capture_output=True, text=True, timeout=20)
+    except Exception:
+        return None
+
+
+def xq(channel, prop, typ, val):
+    r = run('xfconf-query', '-c', channel, '-p', prop, '-n', '-t', typ, '-s', str(val))
+    return bool(r and r.returncode == 0)
+
+
+def wallpaper_path(d):
+    w = d['wallpaper']
+    if w == 'custom' and d['custom'] and os.path.isfile(d['custom']):
+        return d['custom']
+    if w == 'mas' or w not in BUILTIN:
+        return f"{SHARE}/wallpapers/mas-{d['mode']}.jpg"
+    return f"{SHARE}/wallpapers/{w}.jpg"
+
+
+def set_wallpaper(img):
+    names = []
+    r = run('xrandr', '--query')
+    if r and r.stdout:
+        names = [l.split()[0] for l in r.stdout.splitlines() if ' connected' in l]
+    n = 0
+    props = []
+    r = run('xfconf-query', '-c', 'xfce4-desktop', '-l')
+    if r and r.stdout:
+        props = [p for p in r.stdout.splitlines() if p.endswith('/last-image')]
+    for p in props:
+        if xq('xfce4-desktop', p, 'string', img): n += 1
+        base = p.rsplit('/', 1)[0]
+        xq('xfce4-desktop', base + '/image-style', 'int', 5)
+        xq('xfce4-desktop', base + '/color-style', 'int', 0)
+    keys = [f'monitor{i}' for i in range(max(1, len(names)))] + [f'monitor{m}' for m in names]
+    for k in keys:
+        base = f'/backdrop/screen0/{k}/workspace0'
+        if xq('xfce4-desktop', base + '/last-image', 'string', img):
+            n += 1
+            xq('xfce4-desktop', base + '/image-style', 'int', 5)
+            xq('xfce4-desktop', base + '/color-style', 'int', 0)
+    xq('xfce4-desktop', '/backdrop/single-workspace-mode', 'bool', 'true')
+    xq('xfce4-desktop', '/backdrop/single-workspace-number', 'int', 0)
+    run('xfdesktop', '--reload')
+    return n
+
+
+def apply(d, wait=False):
+    name = 'MAS-' + d['mode'].capitalize()
+    for _ in range(15 if wait else 1):
+        if run('xfconf-query', '-c', 'xsettings', '-l') and run('xfconf-query', '-c', 'xsettings', '-l').returncode == 0:
+            break
+        time.sleep(2)
+    xq('xsettings', '/Net/ThemeName', 'string', name)
+    xq('xsettings', '/Net/IconThemeName', 'string', name)
+    xq('xsettings', '/Gtk/CursorThemeName', 'string', 'Adwaita')
+    xq('xfwm4', '/general/theme', 'string', name)
+    xq('xfwm4', '/general/title_alignment', 'string', 'left')
+    xq('xfwm4', '/general/button_layout', 'string', '|HMC')
+    xq('xfwm4', '/general/use_compositing', 'bool', 'true' if d['effects'] else 'false')
+    xq('xfwm4', '/general/show_frame_shadow', 'bool', 'true')
+    xq('xfwm4', '/general/show_popup_shadow', 'bool', 'true')
+    # apps that follow the system dark/light choice (GTK4 / libadwaita)
+    run('gsettings', 'set', 'org.gnome.desktop.interface', 'color-scheme', 'prefer-dark' if d['mode'] == 'dark' else 'prefer-light')
+    img = wallpaper_path(d)
+    for _ in range(12 if wait else 1):
+        if set_wallpaper(img) > 0:
+            break
+        time.sleep(3)
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else 'apply'
+    d = load()
+    if cmd == 'apply':
+        apply(d, wait=True)
+    elif cmd == 'toggle':
+        d['mode'] = 'light' if d['mode'] == 'dark' else 'dark'; save(d); apply(d)
+    elif cmd == 'mode' and len(argv) > 2 and argv[2] in ('dark', 'light'):
+        d['mode'] = argv[2]; save(d); apply(d)
+    elif cmd == 'wallpaper' and len(argv) > 2:
+        w = argv[2]
+        if w in BUILTIN: d['wallpaper'] = w
+        elif os.path.isfile(w): d['wallpaper'] = 'custom'; d['custom'] = os.path.abspath(w)
+        else:
+            print('unknown wallpaper', file=sys.stderr); return 2
+        save(d); apply(d)
+    elif cmd == 'effects' and len(argv) > 2 and argv[2] in ('on', 'off'):
+        d['effects'] = argv[2] == 'on'; save(d); apply(d)
+    elif cmd == 'show':
+        print(json.dumps(d))
+    else:
+        print(__doc__); return 2
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))

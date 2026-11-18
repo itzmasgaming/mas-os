@@ -1,0 +1,13 @@
+#!/usr/bin/env bash
+# mas-restore - shows the restore points (Btrfs snapshots) and makes a new one.
+SU="sudo -n /usr/local/bin/mas-restore-root"
+while true; do
+  list="$($SU list 2>&1)" || { zenity --error --no-wrap --title "Restore points" --text "Restore points are not available on this system.\n(They need an installed MAS on Btrfs.)"; exit 1; }
+  choice="$(printf '%s\n' "$list" | zenity --text-info --title "Restore points" --width 640 --height 420 --font "monospace 10" \
+            --ok-label "Make a restore point now" --cancel-label "Close" 2>/dev/null)" || exit 0
+  if $SU create >/dev/null 2>&1; then
+    zenity --info --no-wrap --title "Restore points" --text "Restore point made." --timeout 3 2>/dev/null
+  else
+    zenity --error --no-wrap --title "Restore points" --text "Could not make a restore point."; exit 1
+  fi
+done

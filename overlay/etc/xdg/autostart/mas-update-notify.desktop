@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=MAS update notice
+Exec=/usr/local/bin/mas-update-notify
+NoDisplay=true
+OnlyShowIn=XFCE;

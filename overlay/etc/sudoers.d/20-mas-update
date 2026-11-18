@@ -1,0 +1,2 @@
+# Administrator accounts can check for / install MAS updates (and make restore points) without typing a password.
+%wheel ALL=(root) NOPASSWD: /usr/local/bin/mas-update check, /usr/local/bin/mas-update install, /usr/local/bin/mas-restore-root list, /usr/local/bin/mas-restore-root create

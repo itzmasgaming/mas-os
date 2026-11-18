@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Files
+Comment=
+Exec=thunar
+Icon=mas-tile-files
+Terminal=false
+StartupNotify=false

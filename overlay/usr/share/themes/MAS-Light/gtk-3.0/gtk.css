@@ -1,0 +1,110 @@
+@import url("resource:///org/gtk/libgtk/theme/Adwaita/gtk-contained.css");
+@define-color theme_bg_color #f4f7fd;
+@define-color theme_fg_color #1c2540;
+@define-color theme_base_color #ffffff;
+@define-color theme_text_color #1c2540;
+@define-color theme_selected_bg_color #5b86ff;
+@define-color theme_selected_fg_color #ffffff;
+@define-color borders #d5def2;
+@define-color mas_accent #5b86ff;
+
+* { text-shadow: none; -gtk-icon-shadow: none; }
+window, .background { background-color: #f4f7fd; color: #1c2540; }
+label { color: inherit; }
+label.dim-label, .dim-label { color: #5b6786; }
+.view, iconview, textview text, treeview.view { background-color: #ffffff; color: #1c2540; }
+.view:selected, iconview:selected, treeview.view:selected, row:selected, .view:selected:focus {
+  background-color: #dbe5ff; color: #1c2540; }
+separator { background-color: #d5def2; min-width: 1px; min-height: 1px; }
+
+button, .button {
+  background-image: none; background-color: #ffffff; color: #1c2540; border: 1px solid #d5def2;
+  border-radius: 10px; padding: 5px 14px; box-shadow: none; min-height: 22px; }
+button:hover { background-image: none; background-color: #e3eafb; }
+button.mas-card, button.mas-card.flat { background-color: #ffffff; border: 1px solid #d5def2; }
+button.mas-card:hover { background-color: #e3eafb; }
+entry, entry:focus { background-image: none; box-shadow: none; }
+button:active, button:checked, button:checked:hover { background-image: none; background-color: #5b86ff; color: #ffffff; border-color: #5b86ff; }
+button:disabled { color: #5b6786; opacity: .6; }
+button.flat, .flat button { background-color: transparent; border-color: transparent; }
+button.flat:hover { background-color: #e3eafb; }
+button.suggested-action { background-image: none; background-color: #5b86ff; color: #ffffff; border-color: #5b86ff; }
+button.destructive-action { background-color: #d6303f; color: #fff; border-color: #d6303f; }
+
+entry, spinbutton, combobox button.combo {
+  background-image: none; background-color: #ffffff; color: #1c2540; border: 1px solid #d5def2;
+  border-radius: 10px; padding: 6px 10px; box-shadow: none; min-height: 22px; }
+entry:focus, spinbutton:focus { border-color: #5b86ff; }
+selection, entry selection, label selection { background-color: #5b86ff; color: #fff; }
+
+menu, .menu, .popup, .context-menu, popover.background, popover {
+  background-color: #fbfcff; color: #1c2540; border: 1px solid #d5def2; border-radius: 14px; padding: 6px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.35); }
+menu menuitem, .menu menuitem, menuitem, modelbutton {
+  padding: 8px 14px; border-radius: 8px; min-height: 18px; color: #1c2540; background-color: transparent; }
+menuitem:hover, modelbutton:hover { background-image: none; background-color: #e3eafb; }
+button.mas-card, button.mas-card.flat { background-color: #ffffff; border: 1px solid #d5def2; }
+button.mas-card:hover { background-color: #e3eafb; }
+entry, entry:focus { background-image: none; box-shadow: none; }
+menuitem:disabled { color: #5b6786; }
+menu separator, .menu separator { margin: 5px 8px; background-color: #d5def2; }
+menuitem label { color: inherit; }
+
+headerbar, .titlebar { background-image: none; background-color: #f4f7fd; border-bottom: 1px solid #d5def2; box-shadow: none; color: #1c2540; }
+toolbar, .toolbar, .inline-toolbar, actionbar { background-color: #f4f7fd; border: none; }
+statusbar { color: #5b6786; }
+scrollbar { background-color: transparent; border: none; }
+scrollbar slider { background-color: #d5def2; border-radius: 8px; min-width: 8px; min-height: 8px; border: 2px solid transparent; }
+scrollbar slider:hover { background-color: #5b6786; }
+notebook > header { background-color: #f4f7fd; border-color: #d5def2; }
+notebook > header > tabs > tab:checked { background-color: #ffffff; }
+list, list row, .sidebar { background-color: transparent; color: #1c2540; }
+.sidebar, placessidebar, .sidebar .view { background-color: #eef2fb; }
+row:hover { background-color: #e3eafb; }
+tooltip, tooltip.background { background-color: #1c2540; color: #fff; border-radius: 10px; border: 1px solid #d5def2; }
+tooltip label { color: #fff; }
+switch { background-color: #d5def2; border-radius: 14px; border: none; }
+switch:checked { background-color: #5b86ff; }
+switch slider { background-image: none; background-color: #fff; border-radius: 14px; border: none; box-shadow: none; }
+progressbar trough, scale trough { background-color: #d5def2; border-radius: 6px; border: none; min-height: 6px; }
+progressbar progress, scale highlight { background-color: #5b86ff; border-radius: 6px; border: none; }
+scale slider { background-color: #5b86ff; border: none; border-radius: 10px; min-width: 18px; min-height: 18px; }
+check, radio { background-image: none; background-color: #ffffff; border: 1px solid #d5def2; color: #fff; }
+check:checked, radio:checked { background-color: #5b86ff; border-color: #5b86ff; }
+radio { border-radius: 50%; }
+check { border-radius: 6px; }
+frame > border { border-color: #d5def2; }
+
+/* ---- Thunar / file lists */
+.thunar toolbar, .thunar .toolbar { background-color: #f4f7fd; }
+
+/* ---- Taskbar (xfce4-panel) */
+.xfce4-panel, #XfcePanelWindow, .xfce4-panel.background {
+  background-color: #eef2fb; color: #1c2540; border-top: 1px solid #d5def2; border-radius: 0; }
+.xfce4-panel button, .xfce4-panel .button {
+  background-image: none; background-color: transparent; border: none; border-radius: 10px; padding: 3px 7px;
+  min-height: 0; min-width: 0; box-shadow: none; color: #1c2540; }
+.xfce4-panel button:hover { background-image: none; background-color: #e3eafb; }
+button.mas-card, button.mas-card.flat { background-color: #ffffff; border: 1px solid #d5def2; }
+button.mas-card:hover { background-color: #e3eafb; }
+entry, entry:focus { background-image: none; box-shadow: none; }
+.xfce4-panel button:checked, .xfce4-panel button:active { background-color: #e3eafb; box-shadow: inset 0 -3px 0 -1px #5b86ff; }
+.xfce4-panel label { color: #1c2540; }
+.xfce4-panel menu, .xfce4-panel .menu { padding: 6px; }
+
+/* ---- MAS apps (mas-start, mas-settings) */
+.mas-window { background-color: #fbfcff; border: 1px solid #d5def2; border-radius: 18px; }
+.mas-card { background-color: #ffffff; border: 1px solid #d5def2; border-radius: 14px; padding: 12px 14px; }
+.mas-card:hover { background-color: #e3eafb; }
+.mas-title { font-weight: 700; font-size: 17px; }
+.mas-section { color: #5b6786; font-weight: 700; font-size: 11px; letter-spacing: 1.5px; }
+.mas-sub { color: #5b6786; font-size: 12px; }
+.mas-search { background-color: #ffffff; border: 1px solid #d5def2; border-radius: 12px; padding: 10px 12px; }
+.mas-pinned { background-color: transparent; border: none; border-radius: 12px; padding: 8px; }
+.mas-pinned:hover { background-color: #e3eafb; }
+.mas-icon-btn { background-color: #ffffff; border: 1px solid #d5def2; border-radius: 12px; padding: 8px 10px; }
+.mas-seg { background-color: #ffffff; border: 1px solid #d5def2; border-radius: 12px; padding: 12px; }
+.mas-seg:checked, .mas-seg.active { background-color: #5b86ff; color: #fff; border-color: #5b86ff; }
+.mas-thumb { border: 2px solid transparent; border-radius: 12px; padding: 0; background: none; }
+button.mas-thumb:checked, button.mas-thumb:checked:hover { border-color: #5b86ff; background-color: transparent; color: #1c2540; }
+.mas-toast { background-color: #fbfcff; border: 1px solid #d5def2; border-radius: 16px; }

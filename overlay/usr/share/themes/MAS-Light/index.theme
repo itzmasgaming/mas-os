@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=X-GNOME-Metatheme
+Name=MAS-Light
+Comment=MAS light theme
+Encoding=UTF-8
+
+[X-GNOME-Metatheme]
+GtkTheme=MAS-Light
+MetacityTheme=MAS-Light
+IconTheme=MAS-Light

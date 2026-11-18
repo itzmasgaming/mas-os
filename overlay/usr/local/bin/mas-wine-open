@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+# mas-wine-open - runs a Windows program (.exe .msi .bat) with Wine.
+#   mas-wine-open FILE              normal: uses your Wine folder (~/.wine)
+#   mas-wine-open --sandbox FILE    throw-away: new empty Wine folder, no access to your files, erased when closed
+set -u
+SANDBOX=0
+if [[ "${1:-}" == "--sandbox" ]]; then SANDBOX=1; shift; fi
+FILE="${1:-}"
+
+say() { if command -v zenity >/dev/null 2>&1 && [[ -n "${DISPLAY:-}" ]]; then zenity --error --no-wrap --title "MAS" --text "$1"; else printf '%s\n' "$1" >&2; fi; }
+
+if [[ -z "$FILE" ]]; then
+  FILE="$(zenity --file-selection --title "Choose a Windows program" --file-filter "Windows programs | *.exe *.EXE *.msi *.MSI *.bat *.BAT" 2>/dev/null)" || exit 0
+fi
+[[ -f "$FILE" ]] || { say "File not found:\n$FILE"; exit 1; }
+command -v wine >/dev/null 2>&1 || { say "Wine is not installed."; exit 1; }
+FILE="$(readlink -f -- "$FILE")"
+
+run_wine() { # FILE
+  case "${1,,}" in
+    *.msi) wine msiexec /i "$1" ;;
+    *.bat) wine cmd /c "$1" ;;
+    *)     wine start /unix "$1" ;;
+  esac
+}
+
+if [[ $SANDBOX -eq 0 ]]; then
+  export WINEDEBUG="${WINEDEBUG:--all}"
+  run_wine "$FILE"
+  exit $?
+fi
+
+# --- sandbox: empty Wine folder in a temporary place, removed afterwards
+T="$(mktemp -d /var/tmp/mas-winebox.XXXXXX)"
+trap 'rm -rf "$T"' EXIT
+mkdir -p "$T/home" "$T/work"
+cp -- "$FILE" "$T/work/" || { say "Could not copy the program."; exit 1; }
+NAME="$(basename -- "$FILE")"
+export WINEPREFIX="$T/home/.wine" WINEDEBUG=-all
+if command -v bwrap >/dev/null 2>&1; then
+  ARGS=(--ro-bind / / --dev-bind /dev /dev --proc /proc --tmpfs /tmp --tmpfs /run --tmpfs "$HOME"
+        --bind "$T" "$T" --unshare-ipc --unshare-pid --die-with-parent --setenv HOME "$T/home" --setenv WINEPREFIX "$WINEPREFIX")
+  [[ -d /tmp/.X11-unix ]] && ARGS+=(--ro-bind /tmp/.X11-unix /tmp/.X11-unix)
+  [[ -n "${XAUTHORITY:-}" && -e "${XAUTHORITY:-}" ]] && ARGS+=(--ro-bind "$XAUTHORITY" "$XAUTHORITY")
+  [[ -d "/run/user/$(id -u)" ]] && ARGS+=(--ro-bind "/run/user/$(id -u)" "/run/user/$(id -u)")
+  cd "$T/work" || exit 1
+  case "${NAME,,}" in
+    *.msi) bwrap "${ARGS[@]}" wine msiexec /i "$T/work/$NAME" ;;
+    *.bat) bwrap "${ARGS[@]}" wine cmd /c "$T/work/$NAME" ;;
+    *)     bwrap "${ARGS[@]}" wine start /wait /unix "$T/work/$NAME" ;;
+  esac
+else
+  cd "$T/work" || exit 1
+  case "${NAME,,}" in
+    *.msi) wine msiexec /i "$NAME" ;;
+    *.bat) wine cmd /c "$NAME" ;;
+    *)     wine start /wait /unix "$NAME" ;;
+  esac
+fi
+wineserver -k >/dev/null 2>&1 || true

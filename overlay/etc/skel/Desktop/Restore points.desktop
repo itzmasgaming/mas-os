@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Restore points
+Comment=
+Exec=/usr/local/bin/mas-restore
+Icon=mas-tile-restore
+Terminal=false
+StartupNotify=false

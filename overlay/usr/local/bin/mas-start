@@ -1,0 +1,299 @@
+#!/usr/bin/python3
+"""mas-start - the MAS Start menu / search window.
+
+  mas-start toggle     open it, or close it when it is already open
+  mas-start search     open it with the search box ready (the taskbar Search button)
+"""
+import os, signal, shutil, subprocess, sys
+
+import gi
+gi.require_version('Gtk', '3.0'); gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, Gio
+import cairo
+
+W = 540
+RUN_CARDS = [  # title, subtitle, icon, command (None = not available yet)
+    ('Windows', '.exe .msi .zip', 'mas-windows', ['/usr/local/bin/mas-wine-open']),
+    ('Android', '.apk games · soon', 'mas-android', None),
+    ('Ubuntu LTS', 'apt and bash', 'mas-ubuntu', ['/usr/local/bin/mas-ubuntu']),
+    ('Sandbox', 'Resets on close', 'mas-sandbox', ['/usr/local/bin/mas-sandbox']),
+]
+PINNED = [('Brave', 'mas-brave', ['/usr/local/bin/mas-brave']), ('Files', 'mas-files', ['thunar']),
+          ('Terminal', 'mas-terminal', ['xfce4-terminal']), ('Restore', 'mas-restore', ['/usr/local/bin/mas-restore']),
+          ('Settings', 'mas-settings', ['/usr/local/bin/mas-settings'])]
+SETTINGS = [('Personalize', 'dark light mode wallpaper background theme colors', 'mas-personalize', ['/usr/local/bin/mas-settings', 'personalize']),
+            ('Dark mode', 'dark night theme', 'mas-mode-dark', ['/usr/local/bin/mas-appearance', 'mode', 'dark']),
+            ('Light mode', 'light day theme', 'mas-mode-light', ['/usr/local/bin/mas-appearance', 'mode', 'light']),
+            ('System update', 'update upgrade version', 'mas-update', ['/usr/local/bin/mas-settings', 'update']),
+            ('Accounts', 'user password account', 'mas-user', ['/usr/local/bin/mas-accounts']),
+            ('Network', 'wifi internet ethernet', 'network-wireless', ['nm-connection-editor']),
+            ('Sound', 'volume audio speaker', 'audio-volume-high', ['pavucontrol']),
+            ('Display', 'screen resolution monitor', 'video-display', ['xfce4-display-settings'])]
+PIDFILE = os.path.join(os.environ.get('XDG_RUNTIME_DIR') or '/tmp', 'mas-start.pid')
+
+
+def alive(pid):
+    try:
+        os.kill(pid, 0)
+        return 'mas-start' in open(f'/proc/{pid}/cmdline').read()
+    except Exception:
+        return False
+
+
+def launch(cmd):
+    if shutil.which(cmd[0]) is None and not os.path.exists(cmd[0]):
+        return
+    try:
+        subprocess.Popen(cmd, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+class Start(Gtk.Window):
+    def __init__(self, want_search):
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self.set_decorated(False); self.set_skip_taskbar_hint(True); self.set_skip_pager_hint(True)
+        self.set_keep_above(True); self.set_resizable(False); self.set_title('MAS Start')
+        self.set_role('mas-start'); self.set_type_hint(Gdk.WindowTypeHint.DIALOG)
+        screen = self.get_screen()
+        self.composited = bool(screen.is_composited() and screen.get_rgba_visual())
+        if self.composited:
+            self.set_visual(screen.get_rgba_visual())
+        self.set_app_paintable(True)
+        css = Gtk.CssProvider()
+        css.load_from_data(b"window.mas-root { background-color: transparent; } .mas-win-in { margin: 0; }")
+        Gtk.StyleContext.add_provider_for_screen(screen, css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.get_style_context().add_class('mas-root')
+        self.popover_open = False
+
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14)
+        outer.get_style_context().add_class('mas-window')
+        outer.set_size_request(W, -1)
+        for m in ('top', 'bottom', 'start', 'end'):
+            getattr(outer, 'set_margin_' + m)(0)
+        inner = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14, margin=18)
+        outer.pack_start(inner, True, True, 0)
+        self.add(outer)
+
+        self.entry = Gtk.Entry(placeholder_text='Search apps, files and settings')
+        self.entry.set_icon_from_icon_name(Gtk.EntryIconPosition.PRIMARY, 'mas-search')
+        self.entry.get_style_context().add_class('mas-search')
+        self.entry.connect('changed', self.on_changed)
+        self.entry.connect('activate', self.on_enter)
+        inner.pack_start(self.entry, False, False, 0)
+
+        self.stack = Gtk.Stack(); self.stack.set_transition_type(Gtk.StackTransitionType.NONE)
+        inner.pack_start(self.stack, True, True, 0)
+        self.stack.add_named(self.build_home(), 'home')
+        self.results = Gtk.ListBox(); self.results.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.results.connect('row-activated', lambda lb, row: self.run_row(row))
+        sc = Gtk.ScrolledWindow(); sc.set_min_content_height(330); sc.set_max_content_height(330)
+        sc.add(self.results)
+        self.stack.add_named(sc, 'results')
+
+        inner.pack_start(self.build_footer(), False, False, 0)
+        self.connect('focus-out-event', self.on_focus_out)
+        self.connect('key-press-event', self.on_key)
+        self.connect('size-allocate', self.on_size)
+        self.show_all()
+        self.stack.set_visible_child_name('home')
+        self.place()
+        self.entry.grab_focus()
+
+    # ---------- layout
+    def build_home(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
+        lab = Gtk.Label(label='RUNS ON MAS', xalign=0); lab.get_style_context().add_class('mas-section')
+        box.pack_start(lab, False, False, 0)
+        grid = Gtk.Grid(column_spacing=10, row_spacing=10, column_homogeneous=True)
+        for i, (t, sub, icon, cmd) in enumerate(RUN_CARDS):
+            b = Gtk.Button(); b.get_style_context().add_class('mas-card')
+            h = Gtk.Box(spacing=12)
+            h.pack_start(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.LARGE_TOOLBAR), False, False, 0)
+            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            l1 = Gtk.Label(label=t, xalign=0); l1.set_markup(f'<b>{GLib.markup_escape_text(t)}</b>')
+            l2 = Gtk.Label(label=sub, xalign=0); l2.get_style_context().add_class('mas-sub')
+            v.pack_start(l1, False, False, 0); v.pack_start(l2, False, False, 0)
+            h.pack_start(v, True, True, 0); b.add(h)
+            if cmd is None:
+                b.set_sensitive(False)
+            else:
+                b.connect('clicked', lambda _b, c=cmd: self.go(c))
+            grid.attach(b, i % 2, i // 2, 1, 1)
+        box.pack_start(grid, False, False, 0)
+        lab = Gtk.Label(label='PINNED', xalign=0); lab.get_style_context().add_class('mas-section'); lab.set_margin_top(8)
+        box.pack_start(lab, False, False, 0)
+        row = Gtk.Box(homogeneous=True, spacing=4)
+        for t, icon, cmd in PINNED:
+            b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE); b.get_style_context().add_class('mas-pinned')
+            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+            v.pack_start(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.DND), False, False, 0)
+            v.pack_start(Gtk.Label(label=t), False, False, 0)
+            b.add(v); b.connect('clicked', lambda _b, c=cmd: self.go(c))
+            row.pack_start(b, True, True, 0)
+        box.pack_start(row, False, False, 0)
+        return box
+
+    def build_footer(self):
+        h = Gtk.Box(spacing=10); h.set_margin_top(6)
+        user = GLib.get_real_name()
+        if not user or user == 'Unknown': user = GLib.get_user_name()
+        h.pack_start(Gtk.Image.new_from_icon_name('mas-user', Gtk.IconSize.LARGE_TOOLBAR), False, False, 0)
+        h.pack_start(Gtk.Label(label=user), False, False, 0)
+        pw = Gtk.Button(); pw.set_relief(Gtk.ReliefStyle.NONE); pw.get_style_context().add_class('mas-icon-btn')
+        pw.add(Gtk.Image.new_from_icon_name('mas-power', Gtk.IconSize.LARGE_TOOLBAR)); pw.set_tooltip_text('Power')
+        lk = Gtk.Button(); lk.set_relief(Gtk.ReliefStyle.NONE); lk.get_style_context().add_class('mas-icon-btn')
+        lk.add(Gtk.Image.new_from_icon_name('mas-lock', Gtk.IconSize.LARGE_TOOLBAR)); lk.set_tooltip_text('Sign out (back to the login screen)')
+        lk.connect('clicked', lambda _b: self.go(['xfce4-session-logout', '--logout']))
+        pop = Gtk.Popover.new(pw)
+        pb = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, margin=8)
+        for t, c in (('Sign out', ['xfce4-session-logout', '--logout']), ('Restart', ['systemctl', 'reboot']), ('Shut down', ['systemctl', 'poweroff'])):
+            b = Gtk.ModelButton(text=t); b.connect('clicked', lambda _b, cc=c: self.go(cc)); pb.pack_start(b, False, False, 0)
+        pb.show_all(); pop.add(pb)
+        pop.connect('closed', lambda *_: setattr(self, 'popover_open', False))
+        pw.connect('clicked', lambda _b: (setattr(self, 'popover_open', True), pop.popup()))
+        h.pack_end(pw, False, False, 0); h.pack_end(lk, False, False, 0)
+        return h
+
+    # ---------- placing and closing
+    def place(self):
+        disp = Gdk.Display.get_default()
+        mon = disp.get_primary_monitor() or disp.get_monitor(0)
+        wa = mon.get_workarea()
+        _, nat = self.get_preferred_size()
+        x = wa.x + 10
+        y = wa.y + wa.height - nat.height - 10
+        self.move(max(wa.x, x), max(wa.y, y))
+
+    def on_size(self, *_):
+        if self.composited: return
+        a = self.get_allocation()
+        if a.width < 10: return
+        r = 16; w, h = a.width, a.height
+        surf = cairo.ImageSurface(cairo.FORMAT_A8, w, h); cr = cairo.Context(surf)
+        cr.new_sub_path()
+        for cx, cy, st in ((w - r, r, -90), (w - r, h - r, 0), (r, h - r, 90), (r, r, 180)):
+            cr.arc(cx, cy, r, st * 3.14159265 / 180, (st + 90) * 3.14159265 / 180)
+        cr.close_path(); cr.fill()
+        self.shape_combine_region(Gdk.cairo_region_create_from_surface(surf))
+
+    def on_focus_out(self, *_):
+        GLib.timeout_add(180, self.maybe_close)
+        return False
+
+    def maybe_close(self):
+        if not self.is_active() and not self.popover_open:
+            Gtk.main_quit()
+        return False
+
+    def on_key(self, _w, ev):
+        if ev.keyval == Gdk.KEY_Escape:
+            Gtk.main_quit(); return True
+        if ev.keyval == Gdk.KEY_Down and self.stack.get_visible_child_name() == 'results':
+            row = self.results.get_selected_row() or self.results.get_row_at_index(0)
+            if row: row.grab_focus()
+        return False
+
+    def go(self, cmd):
+        launch(cmd)
+        GLib.idle_add(Gtk.main_quit)
+
+    def focus_search(self):
+        self.present(); self.entry.grab_focus()
+        return True
+
+    # ---------- search
+    def on_changed(self, entry):
+        q = entry.get_text().strip().lower()
+        if getattr(self, '_t', None): GLib.source_remove(self._t)
+        if not q:
+            self.stack.set_visible_child_name('home'); return
+        self._t = GLib.timeout_add(120, self.do_search, q)
+
+    def do_search(self, q):
+        self._t = None
+        for r in self.results.get_children(): self.results.remove(r)
+        hits = []
+        for ai in Gio.AppInfo.get_all():
+            if not ai.should_show(): continue
+            name = ai.get_display_name() or ''
+            hay = (name + ' ' + (ai.get_description() or '') + ' ' + ' '.join(getattr(ai, 'get_keywords', lambda: [])() or [])).lower()
+            if q in hay:
+                hits.append((0 if name.lower().startswith(q) else 1, name, 'App', ai.get_icon(), ('app', ai)))
+        hits.sort(key=lambda h: (h[0], h[1].lower()))
+        rows = hits[:7]
+        for t, kw, icon, cmd in SETTINGS:
+            if q in (t + ' ' + kw).lower():
+                rows.append((2, t, 'Setting', Gio.ThemedIcon.new(icon), ('cmd', cmd)))
+        home = os.path.expanduser('~'); n = 0; files = []
+        if len(q) >= 2:
+            for base, dirs, fs in os.walk(home):
+                dirs[:] = [d for d in dirs if not d.startswith('.')]
+                if base[len(home):].count('/') >= 4: dirs[:] = []
+                for f in fs + dirs:
+                    n += 1
+                    if q in f.lower() and not f.startswith('.'):
+                        files.append(os.path.join(base, f))
+                if n > 6000 or len(files) >= 6: break
+        for p in files[:6]:
+            ic = Gio.content_type_get_icon(Gio.content_type_guess(p, None)[0])
+            rows.append((3, os.path.basename(p), p.replace(home, '~'), ic, ('file', p)))
+        for _, name, kind, icon, act in rows:
+            row = Gtk.ListBoxRow(); row.act = act
+            h = Gtk.Box(spacing=12, margin=8)
+            img = Gtk.Image.new_from_gicon(icon, Gtk.IconSize.LARGE_TOOLBAR) if icon else Gtk.Image.new_from_icon_name('application-x-executable', Gtk.IconSize.LARGE_TOOLBAR)
+            h.pack_start(img, False, False, 0)
+            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+            v.pack_start(Gtk.Label(label=name, xalign=0), False, False, 0)
+            s = Gtk.Label(label=kind, xalign=0); s.get_style_context().add_class('mas-sub'); v.pack_start(s, False, False, 0)
+            h.pack_start(v, True, True, 0); row.add(h); self.results.add(row)
+        if not rows:
+            row = Gtk.ListBoxRow(); row.act = None; row.set_activatable(False)
+            l = Gtk.Label(label='Nothing found', margin=20); l.get_style_context().add_class('mas-sub'); row.add(l); self.results.add(row)
+        self.results.show_all()
+        self.stack.set_visible_child_name('results')
+        first = self.results.get_row_at_index(0)
+        if first: self.results.select_row(first)
+        return False
+
+    def on_enter(self, _e):
+        row = self.results.get_selected_row()
+        if row: self.run_row(row)
+
+    def run_row(self, row):
+        act = getattr(row, 'act', None)
+        if not act: return
+        kind, val = act
+        if kind == 'app':
+            try: val.launch([], Gdk.Display.get_default().get_app_launch_context())
+            except Exception: pass
+        elif kind == 'cmd':
+            launch(val)
+        elif kind == 'file':
+            launch(['xdg-open', val])
+        GLib.idle_add(Gtk.main_quit)
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else 'toggle'
+    try:
+        pid = int(open(PIDFILE).read().strip())
+    except Exception:
+        pid = 0
+    if pid and alive(pid) and pid != os.getpid():
+        os.kill(pid, signal.SIGTERM if cmd == 'toggle' else signal.SIGUSR1)
+        return 0
+    open(PIDFILE, 'w').write(str(os.getpid()))
+    win = Start(cmd == 'search')
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, lambda: (Gtk.main_quit(), False)[1])
+    GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGUSR1, win.focus_search)
+    try:
+        Gtk.main()
+    finally:
+        try: os.unlink(PIDFILE)
+        except Exception: pass
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

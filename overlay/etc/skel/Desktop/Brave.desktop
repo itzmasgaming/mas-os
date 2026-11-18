@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Brave
+Comment=
+Exec=/usr/local/bin/mas-brave
+Icon=mas-tile-brave
+Terminal=false
+StartupNotify=false

@@ -1,0 +1,7 @@
+#!/usr/bin/env bash
+# mas-restore-root - the small part of "Restore points" that needs administrator rights.
+case "${1:-}" in
+  list)   exec snapper -c root list --columns number,date,description ;;
+  create) exec snapper -c root create -d "Restore point made by hand" ;;
+  *) echo "usage: mas-restore-root list|create" >&2; exit 2 ;;
+esac

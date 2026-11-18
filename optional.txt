@@ -18,3 +18,5 @@ grub-btrfs
 snap-pac
 # Windows partitions
 ntfs-3g
+# Lets the Settings app switch GTK4 apps between dark and light
+gsettings-desktop-schemas

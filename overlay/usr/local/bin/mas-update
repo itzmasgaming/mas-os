@@ -1,0 +1,286 @@
+#!/usr/bin/env python3
+"""mas-update - MAS system updater (checks https://github.com/itzmasgaming/mas-os-updates every 24 hours).
+
+  mas-update auto       check; install when AUTO_INSTALL=1          (run by the daily timer)
+  mas-update check      look for a new version, do not install
+  mas-update install    install the new version that was found (checks first if needed)
+  mas-update status     print the saved state as JSON (no root needed)
+
+The update list (updates.mas) is JSON:
+  {"latest": "0.3.1", "released": "2026-12-01", "notes": "What is new",
+   "payload": {"url": "https://.../mas-update-0.3.1.tar.gz", "sha256": "<hex>", "sig": "https://.../mas-update-0.3.1.tar.gz.sig"},
+   "system_upgrade": false, "reboot": true, "min_version": "0.3.0"}
+The payload is a .tar.gz with files laid out like the root of the system (usr/local/bin/..., usr/share/mas/...).
+An optional script .mas/post-update.sh inside it runs as root after the files are copied.
+"""
+import fcntl, hashlib, json, os, re, shutil, subprocess, sys, tarfile, tempfile, time, urllib.request
+
+R = os.environ.get('MAS_ROOT', '')                      # test knob: a fake root folder
+STATE_DIR = R + '/var/lib/mas/update'
+STATUS = STATE_DIR + '/status.json'
+REBOOT_FLAG = R + '/run/mas-reboot-needed'      # in /run: gone after the restart
+RELEASE = R + '/etc/mas-release'
+CONF = R + '/etc/mas/update.conf'
+PUBKEY = R + '/usr/share/mas/update-pubkey.gpg'
+LOG = R + '/var/log/mas-update.log'
+MAX_MANIFEST = 1 << 20
+MAX_PAYLOAD = 600 << 20
+# a payload may only touch these places
+ALLOWED = ('usr/local/bin/', 'usr/share/mas/', 'usr/share/themes/', 'usr/share/icons/', 'usr/share/applications/', 'usr/share/sddm/themes/mas/',
+           'usr/share/plymouth/themes/mas/', 'etc/skel/', 'etc/mas/', 'etc/xdg/', 'etc/mas-release.d/', 'usr/lib/systemd/system/mas-',
+           'etc/systemd/system/mas-', 'etc/sudoers.d/20-mas-', 'etc/polkit-1/rules.d/49-mas-')
+NEVER = ('etc/mas/update.conf',)                         # the user's own settings are not replaced
+
+
+def log(msg):
+    line = time.strftime('%Y-%m-%d %H:%M:%S ') + msg
+    try:
+        os.makedirs(os.path.dirname(LOG), exist_ok=True)
+        with open(LOG, 'a') as f: f.write(line + '\n')
+    except Exception:
+        pass
+    print(msg, file=sys.stderr)
+
+
+def current_version():
+    try:
+        for l in open(RELEASE):
+            m = re.match(r'\s*VERSION\s*=\s*"?([^"\s]+)', l)
+            if m: return m.group(1)
+    except Exception:
+        pass
+    return '0.0.0'
+
+
+def vkey(v):
+    return tuple(int(x) if x.isdigit() else 0 for x in re.split(r'[.\-+]', v))
+
+
+def read_conf():
+    urls, auto = [], True
+    try:
+        for l in open(CONF):
+            l = l.strip()
+            if l.startswith('URL='): urls.append(l[4:].strip())
+            elif l.startswith('AUTO_INSTALL='): auto = l.split('=', 1)[1].strip() == '1'
+    except Exception:
+        pass
+    env = os.environ.get('MAS_UPDATE_URL')
+    if env: urls = [env]
+    return urls, auto
+
+
+def load_status():
+    try:
+        return json.load(open(STATUS))
+    except Exception:
+        return {}
+
+
+def save_status(**kw):
+    st = load_status(); st.update(kw)
+    st['current'] = current_version()
+    os.makedirs(STATE_DIR, exist_ok=True)
+    tmp = STATUS + '.tmp'
+    with open(tmp, 'w') as f: json.dump(st, f)
+    os.chmod(tmp, 0o644); os.replace(tmp, STATUS)
+    return st
+
+
+def fetch(url, limit):
+    if not (url.startswith('https://') or (os.environ.get('MAS_TEST') and url.startswith(('file://', 'http://')))):
+        raise ValueError('only https addresses are allowed')
+    req = urllib.request.Request(url, headers={'User-Agent': 'MAS-updater/1'})
+    with urllib.request.urlopen(req, timeout=25) as r:
+        data = r.read(limit + 1)
+    if len(data) > limit: raise ValueError('file too big')
+    return data
+
+
+def get_manifest():
+    urls, _ = read_conf()
+    last = 'no update address'
+    for u in urls:
+        try:
+            d = json.loads(fetch(u, MAX_MANIFEST).decode('utf-8'))
+            if isinstance(d, dict) and 'latest' in d and re.fullmatch(r'[0-9A-Za-z.\-+]{1,32}', str(d['latest'])):
+                return d, u
+            last = f'{u}: not an update list'
+        except Exception as e:
+            last = f'{u}: {e}'
+    raise RuntimeError(last)
+
+
+def cmd_check():
+    cur = current_version()
+    now = int(time.time())
+    try:
+        m, used = get_manifest()
+    except Exception as e:
+        log(f'check failed: {e}')
+        save_status(state='error' if load_status().get('state') != 'installed' else 'installed', error=str(e), checked=now)
+        return None
+    latest = str(m['latest'])
+    pl = m.get('payload') or {}
+    if m.get('min_version') and vkey(cur) < vkey(str(m['min_version'])):
+        save_status(state='error', error=f'update {latest} needs MAS {m["min_version"]} first', checked=now)
+        return None
+    if vkey(latest) > vkey(cur):
+        log(f'new version {latest} (installed {cur})')
+        save_status(state='available', latest=latest, released=m.get('released', ''), notes=str(m.get('notes', ''))[:2000], error='', checked=now,
+                    manifest=m, source=used)
+        return m
+    log(f'up to date ({cur})')
+    save_status(state='uptodate', latest=latest, error='', checked=now)
+    return None
+
+
+def safe_members(tf):
+    total = 0
+    out = []
+    for mem in tf.getmembers():
+        name = mem.name[2:] if mem.name.startswith('./') else mem.name
+        if name in ('', '.'): continue
+        if name.startswith('/') or '..' in name.split('/'):
+            raise ValueError(f'unsafe path in update: {mem.name}')
+        if mem.isdir():
+            out.append(mem); continue
+        if not mem.isfile():
+            raise ValueError(f'update has a link or device file: {mem.name}')
+        if name == '.mas/post-update.sh' or (name.startswith(ALLOWED) and name not in NEVER):
+            total += mem.size
+            if total > MAX_PAYLOAD: raise ValueError('update too big')
+            out.append(mem)
+        else:
+            raise ValueError(f'update tries to change a protected place: {name}')
+    return out
+
+
+def verify_sig(path, sigurl):
+    if not os.path.exists(PUBKEY):
+        return
+    if not sigurl:
+        raise ValueError('this system needs a signed update, but the update has no signature')
+    sig = path + '.sig'
+    open(sig, 'wb').write(fetch(sigurl, 1 << 16))
+    home = tempfile.mkdtemp(prefix='mas-gpg.')
+    try:
+        env = dict(os.environ, GNUPGHOME=home)
+        subprocess.run(['gpg', '--batch', '--import', PUBKEY], check=True, capture_output=True, env=env)
+        subprocess.run(['gpg', '--batch', '--verify', sig, path], check=True, capture_output=True, env=env)
+    except subprocess.CalledProcessError:
+        raise ValueError('the update signature is not valid')
+    finally:
+        shutil.rmtree(home, ignore_errors=True)
+
+
+def snapshot(desc):
+    if R or not shutil.which('snapper'): return
+    try:
+        if subprocess.run(['snapper', '-c', 'root', 'get-config'], capture_output=True).returncode == 0:
+            subprocess.run(['snapper', '-c', 'root', 'create', '-d', desc], capture_output=True, timeout=120)
+    except Exception as e:
+        log(f'restore point failed (continuing): {e}')
+
+
+def cmd_install():
+    st = load_status()
+    m = st.get('manifest') if st.get('state') == 'available' else None
+    if not m:
+        m = cmd_check()
+    if not m:
+        return 0
+    latest = str(m['latest']); cur = current_version()
+    pl = m.get('payload') or {}
+    save_status(state='installing', error='')
+    work = tempfile.mkdtemp(prefix='mas-upd.', dir=STATE_DIR)
+    try:
+        did = False
+        if m.get('system_upgrade') and not R:
+            log('updating system packages (pacman -Syu)')
+            r = subprocess.run(['pacman', '-Syu', '--noconfirm', '--needed'], capture_output=True, text=True)
+            log(r.stdout[-1500:] + r.stderr[-800:])
+            if r.returncode != 0: raise RuntimeError('system package update failed')
+            did = True
+        if pl.get('url'):
+            url = pl['url']; want = str(pl.get('sha256', '')).lower()
+            if not re.fullmatch(r'[0-9a-f]{64}', want): raise ValueError('the update list has no valid sha256')
+            log(f'downloading {url}')
+            data = fetch(url, MAX_PAYLOAD)
+            if hashlib.sha256(data).hexdigest() != want: raise ValueError('download is damaged (sha256 does not match)')
+            path = os.path.join(work, 'payload.tar.gz'); open(path, 'wb').write(data)
+            verify_sig(path, pl.get('sig'))
+            snapshot(f'Before MAS update {latest}')
+            stage = os.path.join(work, 'stage'); os.makedirs(stage)
+            with tarfile.open(path, 'r:*') as tf:
+                members = safe_members(tf)
+                tf.extractall(stage, members=members, filter='data')
+            backup = os.path.join(STATE_DIR, f'backup-{cur}'); shutil.rmtree(backup, ignore_errors=True)
+            for base, _, files in os.walk(stage):
+                for fn in files:
+                    src = os.path.join(base, fn); rel = os.path.relpath(src, stage)
+                    if rel == '.mas/post-update.sh': continue
+                    dst = os.path.join(R + '/', rel)
+                    if os.path.lexists(dst):
+                        b = os.path.join(backup, rel); os.makedirs(os.path.dirname(b), exist_ok=True); shutil.copy2(dst, b)
+                    os.makedirs(os.path.dirname(dst), exist_ok=True)
+                    tmp = dst + '.mas-new'; shutil.copy2(src, tmp)
+                    if rel.startswith(('usr/local/bin/', 'etc/sudoers.d/')): os.chmod(tmp, 0o755 if rel.startswith('usr/local/bin/') else 0o440)
+                    os.replace(tmp, dst)
+            post = os.path.join(stage, '.mas', 'post-update.sh')
+            if os.path.isfile(post) and not R:
+                r = subprocess.run(['/bin/bash', post], capture_output=True, text=True, timeout=300, cwd='/')
+                log('post-update: ' + (r.stdout + r.stderr)[-800:])
+            did = True
+        if not did:
+            raise ValueError('the update list has nothing to install')
+        # new version number
+        os.makedirs(os.path.dirname(RELEASE), exist_ok=True)
+        lines = [l for l in (open(RELEASE).read().splitlines() if os.path.exists(RELEASE) else []) if not l.startswith('VERSION=')]
+        lines.append(f'VERSION={latest}')
+        open(RELEASE, 'w').write('\n'.join(lines) + '\n')
+        reboot = bool(m.get('reboot', True))
+        if reboot:
+            os.makedirs(os.path.dirname(REBOOT_FLAG), exist_ok=True)
+            open(REBOOT_FLAG, 'w').write(latest + '\n')
+        save_status(state='installed', latest=latest, installed_at=int(time.time()), reboot=reboot, error='', manifest=None)
+        log(f'installed {latest}')
+        return 0
+    except Exception as e:
+        log(f'install failed: {e}')
+        save_status(state='error', error=str(e))
+        return 1
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
+
+
+def main():
+    cmd = sys.argv[1] if len(sys.argv) > 1 else 'status'
+    if cmd == 'status':
+        st = load_status(); st['current'] = current_version()
+        st.pop('manifest', None)
+        st['reboot_needed'] = os.path.exists(REBOOT_FLAG)
+        print(json.dumps(st)); return 0
+    if cmd not in ('auto', 'check', 'install'):
+        print(__doc__); return 2
+    if os.geteuid() != 0 and not R:
+        print('mas-update must run as administrator (use: sudo mas-update ' + cmd + ')', file=sys.stderr); return 1
+    os.makedirs(STATE_DIR, exist_ok=True)
+    lock = open(STATE_DIR + '/lock', 'w')
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        print('another update is running', file=sys.stderr); return 0
+    if cmd == 'check':
+        cmd_check(); return 0
+    if cmd == 'install':
+        return cmd_install()
+    _, auto = read_conf()                                # auto
+    m = cmd_check()
+    if m and auto:
+        return cmd_install()
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

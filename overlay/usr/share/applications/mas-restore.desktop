@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Restore points
+Comment=See and make restore points
+Exec=/usr/local/bin/mas-restore
+Icon=mas-restore
+Terminal=false
+Categories=System;

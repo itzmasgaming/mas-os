@@ -64,3 +64,28 @@ New VM: Linux / Arch Linux (64-bit), 4 GB RAM or more, 2 CPUs, **40 GB disk**, *
 - A time zone picker (the installer guesses it from the internet, else UTC).
 - A screen lock (the Lock Screen action is not available).
 - The Shield dot only sees incoming connections.
+
+---
+
+## What is new in v0.3
+
+**Look (dark and light, like the design screenshots)**
+- Windows-style taskbar at the bottom: MAS button (Start menu), Search, pinned apps, running windows, a dark/light switch, volume, battery and the clock.
+- Start menu with "Runs on MAS" (Windows, Android soon, Ubuntu LTS, Sandbox), Pinned apps, and the Sign out / Power buttons. Typing searches apps, settings and your files.
+- Desktop icons are rounded tiles (Brave, Files, Ubuntu LTS, Sandbox, Restore points).
+- **Settings**: Personalize (Dark / Light, backgrounds MAS, Mountains, Midnight, Aurora, your own picture, smooth effects on/off), Update, About.
+- The wallpaper is applied at every login for every screen (`mas-appearance`), so the white desktop from before cannot happen.
+- Right-click a `.exe` in Files: **Open with Wine** and **Run in Sandbox** (empty Wine folder, no access to your files, erased when it closes).
+
+**Updater (like Windows 10)**
+- `mas-update.timer` checks every 24 hours (first check 10 minutes after boot). It reads `updates.mas` from
+  `https://github.com/itzmasgaming/mas-os-updates` (settings: `/etc/mas/update.conf`).
+- `github.com/.../updates.mas` is a web page address, not a raw file. The updater therefore tries that address first and then
+  `raw.githubusercontent.com/itzmasgaming/mas-os-updates/main/updates.mas` (and `master`). Put `updates.mas` in the main branch of that repo.
+- A new version is downloaded, checked (sha256, optional signature), a restore point is made (Btrfs), the files are copied, and a card says "Restart to finish".
+- Make an update: `./make-update.sh 0.3.1 "What is new"`, attach `dist/mas-update-0.3.1.tar.gz` to a GitHub release `v0.3.1`, upload `dist/updates.mas`.
+- Safety: an update can only change MAS's own folders (the updater refuses anything else), and anyone who can write to that GitHub repo can change every MAS computer, so turn on two-factor login for the account. Optional: put a GPG public key at `/usr/share/mas/update-pubkey.gpg` and every update must then be signed.
+- Manual: Settings > Update, or `sudo mas-update check` / `sudo mas-update install`.
+
+**Tested here:** the look (real xfwm4, xfce4-panel and xfdesktop in a virtual screen, both modes), Start menu, Settings, wallpaper switching, the whole updater (find, download, verify, install, refuse bad files).
+**Not tested here:** the full ISO build and boot, Wine/bubblewrap, Restore points (need a real installed MAS).

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Sandbox
+Comment=
+Exec=/usr/local/bin/mas-sandbox
+Icon=mas-tile-sandbox
+Terminal=false
+StartupNotify=false

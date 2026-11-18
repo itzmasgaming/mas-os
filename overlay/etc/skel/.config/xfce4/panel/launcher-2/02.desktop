@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Search
+Comment=
+Exec=/usr/local/bin/mas-start search
+Icon=mas-search
+Terminal=false
+StartupNotify=false

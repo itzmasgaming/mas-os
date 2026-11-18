@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=X-GNOME-Metatheme
+Name=MAS-Dark
+Comment=MAS dark theme
+Encoding=UTF-8
+
+[X-GNOME-Metatheme]
+GtkTheme=MAS-Dark
+MetacityTheme=MAS-Dark
+IconTheme=MAS-Dark

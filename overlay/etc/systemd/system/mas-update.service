@@ -1,0 +1,11 @@
+[Unit]
+Description=MAS update check
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=!/run/archiso
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mas-update auto
+Nice=10
+IOSchedulingClass=idle

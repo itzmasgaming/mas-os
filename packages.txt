@@ -78,6 +78,9 @@ python-cairo
 gtk3
 gtk4
 
+# Throw-away space for "Run in Sandbox" on a Windows program
+bubblewrap
+
 # Restore points (Btrfs)
 btrfs-progs
 snapper

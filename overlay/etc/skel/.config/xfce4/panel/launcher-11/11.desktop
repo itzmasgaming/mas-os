@@ -1,0 +1,9 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Dark / light mode
+Comment=
+Exec=/usr/local/bin/mas-appearance toggle
+Icon=mas-mode
+Terminal=false
+StartupNotify=false
