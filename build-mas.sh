@@ -89,6 +89,8 @@ echo "==> Adding the MAS layer (setup screen, installer, login screen, launchers
 AIR="$PROFILE/airootfs"
 cp -a "$HERE/overlay/." "$AIR/"
 cp -a "$HERE/live/." "$AIR/"
+# Leftovers from an older upload of this kit (files from a zip are added over old ones, never removed)
+rm -f "$AIR/etc/xdg/xfce4/xfconf/xfce-perchannel-xml/xsettings.xml"
 mkdir -p "$AIR/var/lib/mas" "$AIR/home/mas"
 # Settings that XFCE's own packages also ship (the theme) go in the account's home, not in /etc,
 # otherwise pacman stops with "conflicting files". New accounts get them through /etc/skel.
