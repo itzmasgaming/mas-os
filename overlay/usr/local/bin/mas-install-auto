@@ -1,0 +1,294 @@
+#!/usr/bin/env bash
+# mas-install-auto --disk /dev/XXX --user NAME [--password]
+#
+# The unattended installer behind the first-time setup screen (mas-setup). No questions are asked here.
+# With --password the password is read from the first line of standard input (never from the command line,
+# so other accounts cannot see it with "ps"). Without it the account has no password.
+#
+# It prints lines the setup screen understands:
+#   PROGRESS <0-100> <text>     KEY <recovery key>     ERROR <text>     DONE
+# Everything else goes to the log: /var/log/mas-install.log
+#
+# What it does: partitions the disk (GPT; EFI or BIOS boot), makes Btrfs (@, @home, @snapshots), copies the
+# running live system onto it (no internet needed), sets up language/time/hostname, makes your account,
+# rebuilds the boot image, installs GRUB and turns the services on.
+#
+# Test settings (never needed on a real run): MAS_SRC MAS_MNT MAS_LOG MAS_TEST=1 MAS_BOOT_MODE=uefi|bios
+set -uo pipefail
+
+SRC="${MAS_SRC:-/run/archiso/airootfs}"
+MNT="${MAS_MNT:-/mnt/mas-target}"
+LOG="${MAS_LOG:-/var/log/mas-install.log}"
+TEST="${MAS_TEST:-0}"
+OPTS="noatime,compress=zstd:3"
+
+DISK="" NAME="" WANT_PW=0 PASS=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --disk) DISK="${2:-}"; shift 2 ;;
+    --user) NAME="${2:-}"; shift 2 ;;
+    --password) WANT_PW=1; shift ;;
+    *) echo "usage: mas-install-auto --disk /dev/XXX --user NAME [--password]" >&2; exit 2 ;;
+  esac
+done
+
+if [[ $EUID -ne 0 ]]; then exec sudo -n "$0" "$@"; fi
+mkdir -p "$(dirname "$LOG")"
+: > "$LOG"
+if [[ $WANT_PW -eq 1 ]]; then IFS= read -r PASS || PASS=""; fi
+
+say()  { printf 'PROGRESS %s %s\n' "$1" "$2"; printf '[%s] %s\n' "$1" "$2" >> "$LOG"; }
+note() { printf '%s\n' "$*" >> "$LOG"; }
+
+cleanup() {
+  cd / 2>/dev/null || true
+  sync
+  if mountpoint -q "$MNT" 2>/dev/null; then umount -R "$MNT" >>"$LOG" 2>&1 || umount -Rl "$MNT" >>"$LOG" 2>&1 || true; fi
+}
+die() {
+  note "FAILED: $1"
+  tail -n 8 "$LOG" | sed 's/^/  /'
+  echo "ERROR $1"
+  cleanup
+  exit 1
+}
+# run a command, log its output, stop with a message when it fails
+must() { local msg="$1"; shift; note "+ $*"; "$@" >>"$LOG" 2>&1 || die "$msg"; }
+
+CH() {  # run a command inside the new system
+  if [[ "$TEST" == 1 ]]; then note "[chroot] $*"; return 0; fi
+  arch-chroot "$MNT" "$@"
+}
+
+# ------------------------------------------------------------------------------------------ checks
+say 2 "Checking..."
+[[ -b "$DISK" || "$TEST" == 1 ]] || die "The disk $DISK was not found."
+[[ "$NAME" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]] || die "The account name is not allowed."
+case "$NAME" in root|mas|nobody|admin|administrator|daemon|bin|sys|sudo|wheel|guest) die "The account name '$NAME' is reserved." ;; esac
+if [[ $WANT_PW -eq 1 && ${#PASS} -lt 8 ]]; then die "The password needs at least 8 characters."; fi
+[[ -d "$SRC/usr" ]] || die "The MAS system image was not found at $SRC. Run this from the live ISO."
+if [[ "$TEST" != 1 ]]; then
+  for tool in sgdisk wipefs partprobe mkfs.fat mkfs.btrfs rsync arch-chroot blkid lsblk; do
+    command -v "$tool" >/dev/null 2>&1 || die "The tool '$tool' is missing on this ISO."
+  done
+  live_src="$(findmnt -n -o SOURCE /run/archiso/bootmnt 2>/dev/null || true)"
+  if [[ -n "$live_src" ]]; then
+    live_disk="/dev/$(lsblk -no PKNAME "$live_src" 2>/dev/null | head -n1)"
+    [[ "$live_disk" != "$DISK" && "$live_src" != "$DISK" ]] || die "That disk holds the MAS ISO itself. Pick another disk."
+  fi
+fi
+
+if [[ -n "${MAS_BOOT_MODE:-}" ]]; then BOOT_MODE="$MAS_BOOT_MODE"
+elif [[ -d /sys/firmware/efi ]]; then BOOT_MODE=uefi
+else BOOT_MODE=bios; fi
+note "boot mode: $BOOT_MODE, disk: $DISK, user: $NAME, password: $WANT_PW"
+
+# ------------------------------------------------------------------------------------------ disk
+say 5 "Preparing the disk..."
+if [[ "$TEST" != 1 ]]; then
+  for p in $(lsblk -lnpo NAME "$DISK" | tail -n +2 | sort -r); do
+    swapoff "$p" 2>/dev/null || true
+    umount -R "$p" 2>/dev/null || true
+  done
+fi
+must "Could not clear the disk." wipefs -af "$DISK"
+must "Could not clear the disk." sgdisk --zap-all "$DISK"
+if [[ "$BOOT_MODE" == uefi ]]; then
+  must "Could not partition the disk." sgdisk -n1:0:+512M -t1:ef00 -c1:MAS_EFI -n2:0:0 -t2:8300 -c2:MAS_ROOT "$DISK"
+else
+  must "Could not partition the disk." sgdisk -n1:0:+2M -t1:ef02 -c1:BIOS -n2:0:0 -t2:8300 -c2:MAS_ROOT "$DISK"
+fi
+partprobe "$DISK" >>"$LOG" 2>&1 || true
+udevadm settle >>"$LOG" 2>&1 || true
+sleep 1
+if [[ "$DISK" =~ [0-9]$ ]]; then P="${DISK}p"; else P="$DISK"; fi
+EFI="${P}1"
+ROOT="${P}2"
+for _ in 1 2 3 4 5 6 7 8 9 10; do [[ -b "$ROOT" ]] && break; sleep 1; done
+[[ -b "$ROOT" ]] || die "The new partitions did not appear."
+
+say 10 "Making the file system..."
+if [[ "$BOOT_MODE" == uefi ]]; then must "Could not format the boot partition." mkfs.fat -F32 -n MAS_EFI "$EFI"; fi
+must "Could not format the system partition." mkfs.btrfs -f -L MAS_ROOT "$ROOT"
+mkdir -p "$MNT"
+must "Could not mount the new disk." mount "$ROOT" "$MNT"
+for sv in @ @home @snapshots; do must "Could not create $sv." btrfs subvolume create "$MNT/$sv"; done
+must "Could not unmount the new disk." umount "$MNT"
+must "Could not mount the new disk." mount -o "$OPTS,subvol=@" "$ROOT" "$MNT"
+mkdir -p "$MNT/home" "$MNT/.snapshots" "$MNT/boot/efi"
+must "Could not mount /home." mount -o "$OPTS,subvol=@home" "$ROOT" "$MNT/home"
+must "Could not mount /.snapshots." mount -o "$OPTS,subvol=@snapshots" "$ROOT" "$MNT/.snapshots"
+if [[ "$BOOT_MODE" == uefi ]]; then must "Could not mount the boot partition." mount "$EFI" "$MNT/boot/efi"; fi
+
+# ------------------------------------------------------------------------------------------ copy
+say 15 "Copying MAS..."
+last=-1
+rsync -aAXH --numeric-ids --info=progress2 --no-inc-recursive \
+      --exclude='/proc/*' --exclude='/sys/*' --exclude='/dev/*' --exclude='/run/*' --exclude='/tmp/*' \
+      --exclude='/mnt/*' --exclude='/lost+found' "$SRC"/ "$MNT"/ 2>>"$LOG" \
+  | tr '\r' '\n' \
+  | while IFS= read -r line; do
+      if [[ "$line" =~ ([0-9]+)% ]]; then
+        pct="${BASH_REMATCH[1]}"
+        if [[ "$pct" != "$last" ]]; then last="$pct"; say $((15 + pct * 55 / 100)) "Copying MAS... ${pct}%"; fi
+      fi
+    done
+[[ ${PIPESTATUS[0]} -eq 0 ]] || die "Could not copy the system to the disk (is it big enough?)."
+mkdir -p "$MNT"/{proc,sys,dev,run,tmp,mnt}
+chmod 1777 "$MNT/tmp"
+
+# ------------------------------------------------------------------------------------------ system
+say 72 "Setting up the system..."
+ROOT_UUID="$(blkid -s UUID -o value "$ROOT" 2>/dev/null || echo TEST-ROOT)"
+{
+  echo "# <file system>  <dir>  <type>  <options>  <dump>  <pass>"
+  echo "UUID=$ROOT_UUID  /           btrfs  $OPTS,subvol=/@           0 0"
+  echo "UUID=$ROOT_UUID  /home       btrfs  $OPTS,subvol=/@home       0 0"
+  echo "UUID=$ROOT_UUID  /.snapshots btrfs  $OPTS,subvol=/@snapshots  0 0"
+  if [[ "$BOOT_MODE" == uefi ]]; then
+    EFI_UUID="$(blkid -s UUID -o value "$EFI" 2>/dev/null || echo TEST-EFI)"
+    echo "UUID=$EFI_UUID  /boot/efi  vfat  rw,noatime,fmask=0137,dmask=0027,codepage=437,iocharset=ascii,shortname=mixed,utf8,errors=remount-ro  0 2"
+  fi
+} > "$MNT/etc/fstab"
+
+# Things that only make sense on the live ISO
+rm -f "$MNT/etc/sddm.conf.d/autologin.conf" "$MNT/etc/sudoers.d/mas-live" "$MNT/var/lib/mas/default-open"
+rm -f "$MNT/etc/systemd/system/pacman-init.service" "$MNT/etc/systemd/system/etc-pacman.d-gnupg.mount" \
+      "$MNT/etc/systemd/system/choose-mirror.service" "$MNT/etc/systemd/system/mas-live-boot.service"
+find "$MNT/etc/systemd/system" -xtype l -delete 2>/dev/null || true
+rm -rf "$MNT/etc/systemd/system/getty@tty1.service.d" "$MNT/etc/systemd/journald.conf.d/volatile-storage.conf" \
+       "$MNT/etc/systemd/logind.conf.d/do-not-suspend.conf" "$MNT/etc/motd" "$MNT/root/.automated_script.sh" "$MNT/root/.zlogin"
+rm -f "$MNT/usr/local/bin/mas-setup" "$MNT/usr/local/bin/mas-install-auto" "$MNT/usr/local/bin/mas-live-session" \
+      "$MNT/usr/local/bin/mas-live-boot" "$MNT/usr/share/xsessions/mas-live.desktop" "$MNT/usr/share/applications/mas-install.desktop"
+
+echo mas > "$MNT/etc/hostname"
+printf '127.0.0.1 localhost\n::1 localhost\n127.0.1.1 mas.localdomain mas\n' > "$MNT/etc/hosts"
+sed -i 's/^#\(en_US.UTF-8 UTF-8\)/\1/' "$MNT/etc/locale.gen" 2>/dev/null || true
+CH locale-gen >>"$LOG" 2>&1 || true
+echo 'LANG=en_US.UTF-8' > "$MNT/etc/locale.conf"
+echo 'KEYMAP=us' > "$MNT/etc/vconsole.conf"
+
+# time zone: guess it from the internet when there is a connection, otherwise UTC (change it later in Settings)
+tz=""
+if [[ "$TEST" != 1 ]]; then tz="$(curl -fsS -m 4 https://ipapi.co/timezone 2>/dev/null | tr -d '[:space:]')"; fi
+if [[ -z "$tz" || ! -f "/usr/share/zoneinfo/$tz" ]]; then tz=UTC; fi
+ln -sf "../usr/share/zoneinfo/$tz" "$MNT/etc/localtime"
+note "time zone: $tz"
+
+# package mirrors for the installed system
+printf 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch\nServer = https://mirror.rackspace.com/archlinux/$repo/os/$arch\n' \
+  > "$MNT/etc/pacman.d/mirrorlist"
+
+# restore points (Snapper) on the Btrfs "@" subvolume
+if [[ -f "$MNT/etc/snapper/config-templates/default" ]]; then
+  mkdir -p "$MNT/etc/snapper/configs" "$MNT/etc/conf.d"
+  sed -e 's|^SUBVOLUME=.*|SUBVOLUME="/"|' -e 's|^ALLOW_GROUPS=.*|ALLOW_GROUPS="wheel"|' \
+      -e 's|^TIMELINE_LIMIT_HOURLY=.*|TIMELINE_LIMIT_HOURLY="5"|' -e 's|^TIMELINE_LIMIT_DAILY=.*|TIMELINE_LIMIT_DAILY="7"|' \
+      -e 's|^TIMELINE_LIMIT_WEEKLY=.*|TIMELINE_LIMIT_WEEKLY="0"|' -e 's|^TIMELINE_LIMIT_MONTHLY=.*|TIMELINE_LIMIT_MONTHLY="0"|' \
+      -e 's|^TIMELINE_LIMIT_YEARLY=.*|TIMELINE_LIMIT_YEARLY="0"|' \
+      "$MNT/etc/snapper/config-templates/default" > "$MNT/etc/snapper/configs/root"
+  echo 'SNAPPER_CONFIGS="root"' > "$MNT/etc/conf.d/snapper"
+  chmod 750 "$MNT/.snapshots"
+fi
+
+# ------------------------------------------------------------------------------------------ account
+say 80 "Creating your account..."
+# the live account goes away, then the new one takes its place (same number 1000)
+if grep -q '^mas:' "$MNT/etc/passwd" 2>/dev/null; then CH userdel -rf mas >>"$LOG" 2>&1 || true; fi
+groups="wheel"
+for g in audio video storage optical lp scanner; do
+  if grep -q "^$g:" "$MNT/etc/group"; then groups="$groups,$g"; fi
+done
+must "Could not create your account." CH useradd -m -G "$groups" -s /bin/bash -c "$NAME" -- "$NAME"
+chmod 700 "$MNT/home/$NAME" 2>/dev/null || true   # private: other accounts cannot open this folder
+mkdir -p "$MNT/var/lib/mas"
+KEY=""
+if [[ $WANT_PW -eq 1 ]]; then
+  # the password is also the root password (MAS design). It goes in through standard input only.
+  printf '%s:%s\nroot:%s\n' "$NAME" "$PASS" "$PASS" | CH chpasswd >>"$LOG" 2>&1 || die "Could not set the password."
+  : > "$MNT/var/lib/mas/passwordless"
+  KEY="$(MAS_RECOVERY_STORE="$MNT/var/lib/mas/recovery" "${MAS_RECOVERY_TOOL:-/usr/local/bin/mas-recovery}" new --user "$NAME" 2>>"$LOG")" || KEY=""
+  [[ -n "$KEY" ]] || die "Could not make the recovery key."
+  chmod 600 "$MNT/var/lib/mas/recovery"
+else
+  CH passwd -d "$NAME" >>"$LOG" 2>&1 || die "Could not set up the account."
+  CH passwd -d root >>"$LOG" 2>&1 || die "Could not set up the account."
+  printf '%s\n' "$NAME" > "$MNT/var/lib/mas/passwordless"   # the login screen shows a Sign In button for it
+  rm -f "$MNT/var/lib/mas/recovery"
+fi
+chmod 644 "$MNT/var/lib/mas/passwordless"
+PASS=""
+
+# the login screen starts on this account, with the XFCE desktop
+mkdir -p "$MNT/var/lib/sddm"
+printf '[Last]\nUser=%s\nSession=/usr/share/xsessions/xfce.desktop\n' "$NAME" > "$MNT/var/lib/sddm/state.conf"
+
+# ------------------------------------------------------------------------------------------ services
+say 84 "Turning on services..."
+rm -f "$MNT/etc/machine-id"
+CH systemd-machine-id-setup >>"$LOG" 2>&1 || true   # a real machine id, so the system does not ask first-boot questions
+for u in sddm NetworkManager nftables systemd-timesyncd fstrim.timer mas-keyring mas-theme-check mas-theme-guard \
+         mas-boot-prompt snapper-timeline.timer snapper-cleanup.timer grub-btrfs.path vboxservice qemu-guest-agent vmtoolsd; do
+  systemctl --root="$MNT" enable "$u" >>"$LOG" 2>&1 || note "(could not enable $u)"
+done
+ln -sf /usr/lib/systemd/system/graphical.target "$MNT/etc/systemd/system/default.target"
+
+# ------------------------------------------------------------------------------------------ boot image
+say 86 "Building the boot image..."
+HAVE_PLY=""
+if [[ -x "$MNT/usr/bin/plymouthd" ]]; then HAVE_PLY="plymouth "; fi
+cat > "$MNT/etc/mkinitcpio.conf" <<EOF
+MODULES=(btrfs)
+BINARIES=()
+FILES=()
+HOOKS=(base udev ${HAVE_PLY}autodetect microcode modconf kms keyboard keymap consolefont block filesystems fsck)
+EOF
+rm -f "$MNT/etc/mkinitcpio.conf.d/archiso.conf" "$MNT/boot/initramfs-linux.img" "$MNT/boot/initramfs-linux-fallback.img"
+mkdir -p "$MNT/etc/mkinitcpio.d"
+cat > "$MNT/etc/mkinitcpio.d/linux.preset" <<'EOF'
+# mkinitcpio preset file for the 'linux' package
+ALL_config="/etc/mkinitcpio.conf"
+ALL_kver="/boot/vmlinuz-linux"
+PRESETS=('default' 'fallback')
+default_image="/boot/initramfs-linux.img"
+fallback_image="/boot/initramfs-linux-fallback.img"
+fallback_options="-S autodetect"
+EOF
+# The ISO keeps its kernel outside the system image, so put the kernel into /boot ourselves
+if [[ ! -f "$MNT/boot/vmlinuz-linux" ]]; then
+  for k in "$MNT"/usr/lib/modules/*/vmlinuz; do
+    if [[ -f "$k" ]]; then install -Dm644 "$k" "$MNT/boot/vmlinuz-linux"; break; fi
+  done
+fi
+if [[ "$TEST" != 1 && ! -f "$MNT/boot/vmlinuz-linux" ]]; then die "The kernel was not found."; fi
+must "Could not build the boot image." CH mkinitcpio -P
+
+# ------------------------------------------------------------------------------------------ boot loader
+say 90 "Installing the boot loader..."
+GR="$MNT/etc/default/grub"
+mkdir -p "$(dirname "$GR")"
+touch "$GR"
+set_grub() {  # KEY VALUE (VALUE already quoted when it needs to be)
+  if grep -q "^$1=" "$GR"; then sed -i "s|^$1=.*|$1=$2|" "$GR"; else printf '%s=%s\n' "$1" "$2" >> "$GR"; fi
+}
+set_grub GRUB_DISTRIBUTOR '"MAS"'
+set_grub GRUB_CMDLINE_LINUX_DEFAULT '"quiet splash loglevel=3"'
+set_grub GRUB_TIMEOUT 3
+set_grub GRUB_DISABLE_OS_PROBER true
+if [[ "$BOOT_MODE" == uefi ]]; then
+  must "Could not install the boot loader." CH grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=MAS --recheck
+  # a second copy at the standard fallback place, for firmware that forgets boot entries
+  CH grub-install --target=x86_64-efi --efi-directory=/boot/efi --removable --recheck >>"$LOG" 2>&1 || note "(fallback boot file failed)"
+else
+  must "Could not install the boot loader." CH grub-install --target=i386-pc --recheck "$DISK"
+fi
+must "Could not write the boot menu." CH grub-mkconfig -o /boot/grub/grub.cfg
+
+# ------------------------------------------------------------------------------------------ done
+say 97 "Finishing..."
+cleanup
+note "install finished"
+if [[ -n "$KEY" ]]; then echo "KEY $KEY"; fi
+say 100 "Done"
+echo DONE
+exit 0

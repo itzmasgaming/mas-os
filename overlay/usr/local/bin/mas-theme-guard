@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # mas-theme-guard - watches the first 45 seconds after the login screen starts. If the MAS login screen
-# fails to load or crashes, it switches to the standard Breeze login screen and restarts the login manager.
+# fails to load or crashes, it switches to the plain built-in login screen and restarts the login manager.
 # Only acts once per boot.
 CHECK="${MAS_THEME_CHECK:-/usr/local/bin/mas-theme-check}"
 FLAG="${MAS_WATCHDOG_FLAG:-/run/mas-theme-fallback}"

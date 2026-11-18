@@ -1,0 +1,20 @@
+#!/bin/sh
+# mas-live-session - the X session of the live ISO (autologin as "mas").
+# 1. The first-time setup (mas-setup) covers the screen. It installs MAS by itself.
+# 2. If you choose "Try MAS without installing" (or the setup cannot start), the normal XFCE desktop opens,
+#    so the screen is never left black.
+export XDG_SESSION_TYPE=x11
+export GDK_BACKEND=x11
+export GSK_RENDERER=cairo      # CPU drawing: always works, also on weak virtual graphics cards
+xsetroot -solid '#0b0f19' 2>/dev/null
+xfwm4 --compositor=off >/dev/null 2>&1 &
+WM=$!
+/usr/local/bin/mas-setup
+rc=$?
+if [ "$rc" -eq 0 ]; then
+  # installed: the computer is restarting, just wait for it
+  exec sleep 3600
+fi
+kill "$WM" 2>/dev/null
+wait "$WM" 2>/dev/null
+exec startxfce4

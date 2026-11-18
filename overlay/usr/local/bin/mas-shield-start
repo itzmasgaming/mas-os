@@ -1,8 +1,3 @@
 #!/usr/bin/env bash
-# mas-shield-start - starts MAS Shield the right way for the running desktop.
-# Wayland (Plasma): corner dot + notifications.  X11 (XFCE): notifications only.
-if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
-  exec env GDK_BACKEND=wayland LD_PRELOAD=/usr/lib/libgtk4-layer-shell.so /usr/local/bin/mas-shield
-else
-  exec /usr/local/bin/mas-shield --notify-only
-fi
+# mas-shield-start - starts MAS Shield: the corner dot (XFCE / X11) plus notifications.
+exec /usr/local/bin/mas-shield

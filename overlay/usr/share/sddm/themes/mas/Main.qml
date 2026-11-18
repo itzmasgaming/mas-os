@@ -3,7 +3,7 @@ import QtQuick 2.15
 // MAS login screen.
 //  - An account with no password shows a "Sign In" button instead of a password box.
 //  - Signing in shows "Loading...". A wrong password shows "Wrong password" after the loading.
-//  - Bottom left: choose the desktop session (for example the simple XFCE desktop).
+//  - Bottom left: the desktop session (shown only when there is more than one).
 // Which accounts have no password is read from /var/lib/mas/passwordless (one name per line).
 
 Rectangle {
@@ -19,10 +19,6 @@ Rectangle {
     property bool busy: false
     property string message: ""
     property bool sessionsOpen: false
-    // Set when the last Plasma start of this account ended within seconds (see mas-wayland-session)
-    property string failInfo: ""
-    property int xfceIndex: -1
-    property bool userPicked: false
     property string firstUser: ""
     property bool userKnown: false
 
@@ -45,26 +41,6 @@ Rectangle {
         xhr.send()
     }
 
-    function checkFailure() {
-        var xhr = new XMLHttpRequest()
-        xhr.open("GET", "file:///var/lib/mas/flags/plasma-failed-" + root.selectedUser)
-        xhr.onreadystatechange = function() {
-            if (xhr.readyState === XMLHttpRequest.DONE) {
-                root.failInfo = (xhr.responseText || "").trim()
-            }
-        }
-        xhr.send()
-    }
-
-    // After a failed Plasma start, preselect the simple desktop (XFCE) unless the user chose a session
-    function applyFallback() {
-        if (root.failInfo !== "" && root.xfceIndex >= 0 && !root.userPicked) {
-            root.sessionIndex = root.xfceIndex
-        }
-    }
-    onFailInfoChanged: applyFallback()
-    onXfceIndexChanged: applyFallback()
-
     function doLogin() {
         if (root.busy || root.selectedUser === "") {
             return
@@ -75,11 +51,10 @@ Rectangle {
         sddm.login(root.selectedUser, root.passwordless ? "" : pwField.text, si)
     }
 
-    onSelectedUserChanged: { checkPasswordless(); checkFailure() }
+    onSelectedUserChanged: checkPasswordless()
 
     Component.onCompleted: {
         checkPasswordless()
-        checkFailure()
         if (!root.passwordless) {
             pwField.forceActiveFocus()
         }
@@ -127,20 +102,6 @@ Rectangle {
     Rectangle {
         anchors.fill: parent
         color: "#66000000"
-    }
-
-    // Finds the XFCE session in the list of sessions
-    Repeater {
-        model: sessionModel
-        delegate: Item {
-            width: 0
-            height: 0
-            Component.onCompleted: {
-                if (String(model.name).toLowerCase().indexOf("xfce") >= 0) {
-                    root.xfceIndex = index
-                }
-            }
-        }
     }
 
     // If the remembered account does not exist (for example the temporary first-start account),
@@ -353,35 +314,10 @@ Rectangle {
         }
     }
 
-    // Shown when the desktop closed right after starting: what happened, so it can be fixed
-    Rectangle {
-        visible: root.failInfo !== ""
-        anchors.horizontalCenter: parent.horizontalCenter
-        y: root.height - 190
-        width: Math.min(root.width - 80, 820)
-        height: 120
-        radius: 8
-        color: "#cc101828"
-        border.color: "#ff8f8f"
-        border.width: 1
-        clip: true
-
-        Text {
-            anchors.fill: parent
-            anchors.margins: 10
-            wrapMode: Text.WrapAnywhere
-            elide: Text.ElideRight
-            color: "#ffd0d0"
-            font.pixelSize: 12
-            text: "The desktop closed right after it started" +
-                  (root.xfceIndex >= 0 ? " - the simple desktop (XFCE) is selected this time.\n" : ".\n") +
-                  root.failInfo
-        }
-    }
-
     // Bottom left: desktop session
     Rectangle {
         id: sessionButton
+        visible: sessionModel.count > 1
         x: 24
         y: root.height - 58
         height: 34
@@ -440,8 +376,7 @@ Rectangle {
                 MouseArea {
                     anchors.fill: parent
                     onClicked: {
-                        root.userPicked = true
-                        root.sessionIndex = index
+                                        root.sessionIndex = index
                         root.sessionsOpen = false
                     }
                 }

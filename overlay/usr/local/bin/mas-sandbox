@@ -14,8 +14,8 @@ DIR="$HOME/Sandbox"
 mkdir -p "$DIR"
 
 say() {
-  if command -v kdialog >/dev/null 2>&1; then
-    kdialog --title "MAS Sandbox" --msgbox "$1"
+  if command -v zenity >/dev/null 2>&1; then
+    zenity --info --no-wrap --title "MAS Sandbox" --text "$1"
   else
     printf '%b\n' "$1"
   fi
@@ -29,8 +29,8 @@ if [[ ${#files[@]} -eq 0 ]]; then
 fi
 
 img="${files[0]}"
-if [[ ${#files[@]} -gt 1 ]] && command -v kdialog >/dev/null 2>&1; then
-  img="$(kdialog --title "MAS Sandbox" --getopenfilename "$DIR" "*.iso *.qcow2 *.img|Disk images")" || exit 0
+if [[ ${#files[@]} -gt 1 ]] && command -v zenity >/dev/null 2>&1; then
+  img="$(zenity --file-selection --title "MAS Sandbox" --filename "$DIR/" --file-filter "Disk images | *.iso *.qcow2 *.img")" || exit 0
 fi
 
 TMP="$(mktemp -d /var/tmp/mas-sandbox.XXXXXX)"
@@ -51,9 +51,9 @@ fi
 # Internet in the sandbox also lets the guest reach services on this computer's own address
 # (QEMU limitation). So ask, and default to the safer answer when the choice is not set.
 if [[ -z "${MAS_SANDBOX_NET:-}" ]]; then
-  if command -v kdialog >/dev/null 2>&1; then
-    if kdialog --title "MAS Sandbox" --yes-label "Internet on" --no-label "No internet (safest)" \
-         --yesno $'Should the Sandbox have internet?\n\nWith internet the guest can download things, but it can also reach programs that listen on this computer. Choose "No internet" for anything you do not trust.'; then
+  if command -v zenity >/dev/null 2>&1; then
+    if zenity --question --no-wrap --title "MAS Sandbox" --ok-label "Internet on" --cancel-label "No internet (safest)" \
+         --text $'Should the Sandbox have internet?\n\nWith internet the guest can download things, but it can also reach programs that listen on this computer. Choose "No internet" for anything you do not trust.'; then
       MAS_SANDBOX_NET=user
     else
       MAS_SANDBOX_NET=none

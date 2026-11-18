@@ -1,0 +1,855 @@
+#!/usr/bin/env python3
+"""mas-setup - the first-time setup of MAS OS. Starts by itself when you boot the ISO.
+
+Three steps:  1 account name + disk   2 password (or skip)   3 installing, then restart.
+Nothing else to click: the installer (mas-install-auto) runs by itself behind step 3.
+
+Exit codes: 0 = installed (the computer is restarting), 10 = "try MAS without installing".
+Options:    --windowed WxH  open in a normal window (testing)      --fake  pretend to install (testing)
+"""
+import json
+import math
+import os
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import threading
+
+os.environ.setdefault("GSK_RENDERER", "cairo")   # CPU drawing: works on every virtual graphics card
+
+import gi
+
+gi.require_version("Gtk", "4.0")
+gi.require_version("Gdk", "4.0")
+from gi.repository import Gdk, GLib, Gtk, Pango  # noqa: E402
+
+try:
+    import cairo  # noqa: F401  (needed by Gtk.DrawingArea draw functions)
+    HAVE_CAIRO = True
+except ImportError:
+    HAVE_CAIRO = False
+
+INSTALLER = os.environ.get("MAS_INSTALLER", "/usr/local/bin/mas-install-auto")
+LOGO = os.environ.get("MAS_LOGO", "/usr/share/mas/mas-logo-white.png")
+LIVE_MARK = "/run/archiso"
+MIN_DISK_GB = 20
+NAME_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,30}$")
+RESERVED = {"root", "mas", "nobody", "admin", "administrator", "daemon", "bin", "sys", "sudo", "wheel", "guest"}
+
+ARGS = sys.argv[1:]
+FAKE = "--fake" in ARGS or os.environ.get("MAS_SETUP_FAKE") == "1"
+WINDOWED = None
+if "--windowed" in ARGS:
+    try:
+        w, h = ARGS[ARGS.index("--windowed") + 1].lower().split("x")
+        WINDOWED = (int(w), int(h))
+    except (IndexError, ValueError):
+        WINDOWED = (1280, 720)
+
+# ---------------------------------------------------------------------------------------------- style
+BG = "#0b0f19"
+LINE = "#1a2133"
+TEXT = "#e8ecf8"
+MUTED = "#8a93a8"
+BLUE = "#7b9bff"
+
+
+def make_css(s):
+    def px(n):
+        return max(1, int(round(n * s)))
+    return f"""
+window.mas-win {{ background: {BG}; color: {TEXT}; font-family: "Inter", "Noto Sans", sans-serif; }}
+.mas-left {{ background: transparent; border-right: 1px solid {LINE}; }}
+.mas-wordmark {{ font-size: {px(30)}px; font-weight: 800; letter-spacing: {px(3)}px; color: {TEXT}; }}
+.mas-eyebrow {{ font-size: {px(13)}px; font-weight: 700; letter-spacing: {px(3)}px; color: {MUTED}; }}
+.mas-hero {{ font-size: {px(66)}px; font-weight: 700; color: {TEXT}; }}
+.mas-desc {{ font-size: {px(19)}px; color: {MUTED}; }}
+.mas-bullet {{ font-size: {px(16)}px; color: #c3cada; }}
+.mas-tick {{ font-size: {px(18)}px; font-weight: 800; color: {BLUE}; }}
+
+.seg {{ min-width: {px(56)}px; min-height: {px(4)}px; border-radius: {px(2)}px; background: #1f2638; }}
+.seg.on {{ background: {BLUE}; }}
+.mas-step {{ font-size: {px(15)}px; color: {MUTED}; }}
+.mas-title {{ font-size: {px(36)}px; font-weight: 700; color: {TEXT}; }}
+.mas-sub {{ font-size: {px(17)}px; color: {MUTED}; }}
+.mas-label {{ font-size: {px(15)}px; font-weight: 600; color: {TEXT}; }}
+.mas-err {{ font-size: {px(15)}px; color: #ff8f8f; }}
+.mas-warn {{ font-size: {px(15)}px; color: #ffc46b; }}
+.mas-hint {{ font-size: {px(14)}px; color: {MUTED}; }}
+
+.card {{ background: #0e1424; border: 1px solid #1b2236; border-radius: {px(14)}px; padding: {px(16)}px {px(20)}px; }}
+.card.sel {{ background: #161e33; border-color: #6b8cff; }}
+.card-title {{ font-size: {px(18)}px; font-weight: 700; color: {TEXT}; }}
+.card-desc {{ font-size: {px(16)}px; color: {MUTED}; }}
+
+entry.mas-entry {{ min-height: {px(46)}px; padding: 0 {px(14)}px; background: #090d16; color: {TEXT};
+                  border: 1px solid #232b3f; border-radius: {px(12)}px; font-size: {px(17)}px; box-shadow: none; }}
+entry.mas-entry:focus-within {{ border-color: #6b8cff; }}
+entry.mas-entry text {{ color: {TEXT}; }}
+entry.mas-entry placeholder {{ color: #646e85; }}
+dropdown.mas-dd > button {{ min-height: {px(46)}px; padding: 0 {px(10)}px; background: #090d16; color: {TEXT};
+                           border: 1px solid #232b3f; border-radius: {px(12)}px; font-size: {px(16)}px; box-shadow: none; }}
+checkbutton.mas-check {{ color: #ffc46b; font-size: {px(15)}px; }}
+checkbutton.mas-check check {{ min-width: {px(20)}px; min-height: {px(20)}px; border-radius: {px(6)}px;
+                              background: #090d16; border: 1px solid #3a4560; }}
+checkbutton.mas-check check:checked {{ background: #ffc46b; border-color: #ffc46b; color: #0b1020; }}
+
+button.mas-back, button.mas-ghost {{ min-height: {px(46)}px; padding: 0 {px(26)}px; background: #090d16; color: {TEXT};
+    border: 1px solid #232b3f; border-radius: {px(12)}px; font-size: {px(18)}px; font-weight: 600; box-shadow: none; }}
+button.mas-ghost {{ background: transparent; border-color: transparent; color: {MUTED}; padding: 0 {px(6)}px; font-size: {px(16)}px; }}
+button.mas-go {{ min-height: {px(46)}px; padding: 0 {px(30)}px; background: {BLUE}; color: #0b1020;
+    border: 1px solid {BLUE}; border-radius: {px(12)}px; font-size: {px(18)}px; font-weight: 700; box-shadow: none; }}
+button.mas-go:disabled {{ background: #2a3350; border-color: #2a3350; color: #6c7589; }}
+button.mas-go:hover:not(:disabled) {{ background: #92aeff; }}
+
+progressbar.mas-pb trough {{ min-height: {px(10)}px; background: #1a2133; border-radius: 99px; border: none; }}
+progressbar.mas-pb progress {{ min-height: {px(10)}px; background: {BLUE}; border-radius: 99px; border: none; }}
+.mas-pct {{ font-size: {px(15)}px; font-weight: 600; color: {TEXT}; }}
+.keybox {{ background: #0e1424; border: 1px solid #1b2236; border-radius: {px(14)}px; padding: {px(16)}px; }}
+.key {{ font-family: "DejaVu Sans Mono", monospace; font-size: {px(19)}px; font-weight: 700; letter-spacing: 1px; color: {TEXT}; }}
+"""
+
+
+# ---------------------------------------------------------------------------------------------- disks
+def run(cmd):
+    try:
+        return subprocess.run(cmd, capture_output=True, text=True, timeout=10).stdout
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def live_disk():
+    """The disk the ISO was started from (never offered as a target)."""
+    src = run(["findmnt", "-n", "-o", "SOURCE", "/run/archiso/bootmnt"]).strip()
+    if not src:
+        return ""
+    parent = run(["lsblk", "-no", "PKNAME", src]).strip().splitlines()
+    return "/dev/" + parent[0].strip() if parent and parent[0].strip() else src
+
+
+def list_disks():
+    """[{path, size_gb, model, has_data}] for every disk MAS may be installed on."""
+    if FAKE and not shutil.which("lsblk"):
+        return [{"path": "/dev/vda", "size_gb": 40, "model": "Virtual disk", "has_data": False}]
+    try:
+        data = json.loads(run(["lsblk", "-J", "-b", "-d", "-o", "PATH,SIZE,MODEL,TYPE,RO,TRAN"]) or "{}")
+    except ValueError:
+        data = {}
+    skip = live_disk()
+    out = []
+    for d in data.get("blockdevices", []):
+        path = d.get("path") or ""
+        if d.get("type") != "disk" or str(d.get("ro")) in ("1", "True", "true") or path == skip:
+            continue
+        if re.match(r"/dev/(loop|zram|sr|fd|ram)", path):
+            continue
+        gb = int(int(d.get("size") or 0) / 1_000_000_000)
+        if gb < MIN_DISK_GB:
+            continue
+        kids = run(["lsblk", "-n", "-o", "NAME", path]).strip().splitlines()
+        has_data = len(kids) > 1 or bool(run(["blkid", "-p", path]).strip())
+        out.append({"path": path, "size_gb": gb, "model": (d.get("model") or "Disk").strip(), "has_data": has_data})
+    return out
+
+
+def normalize_name(raw):
+    return re.sub(r"[^a-z0-9_-]", "", raw.strip().lower().replace(" ", ""))
+
+
+def user_exists(name):
+    try:
+        import pwd
+        pwd.getpwnam(name)
+        return True
+    except KeyError:
+        return False
+
+
+# ---------------------------------------------------------------------------------------------- widgets
+class RadioDot(Gtk.DrawingArea):
+    def __init__(self, size):
+        super().__init__()
+        self.on = False
+        self.set_content_width(size)
+        self.set_content_height(size)
+        self.set_valign(Gtk.Align.CENTER)
+        if HAVE_CAIRO:
+            self.set_draw_func(self._draw)
+
+    def set_on(self, on):
+        self.on = on
+        self.queue_draw()
+
+    def _draw(self, _area, cr, w, h):
+        r = min(w, h) / 2 - 2
+        cx, cy = w / 2, h / 2
+        cr.set_line_width(max(2, w / 11))
+        if self.on:
+            cr.set_source_rgb(0.42, 0.55, 1.0)
+        else:
+            cr.set_source_rgb(0.16, 0.20, 0.30)
+        cr.arc(cx, cy, r, 0, 2 * math.pi)
+        cr.stroke()
+        if self.on:
+            cr.arc(cx, cy, r * 0.48, 0, 2 * math.pi)
+            cr.fill()
+
+
+class Arcs(Gtk.DrawingArea):
+    """The faint circles behind the left panel."""
+    def __init__(self, s):
+        super().__init__()
+        self.s = s
+        self.set_hexpand(True)
+        self.set_vexpand(True)
+        if HAVE_CAIRO:
+            self.set_draw_func(self._draw)
+
+    def _draw(self, _area, cr, w, h):
+        cr.set_source_rgba(0.55, 0.62, 0.85, 0.075)
+        cr.set_line_width(max(1.0, 1.2 * self.s))
+        cx, cy = w * 0.28, h * 0.90
+        for r in (190, 330, 470, 610, 750):
+            cr.arc(cx, cy, r * self.s, 0, 2 * math.pi)
+            cr.stroke()
+
+
+def label(text, css=None, wrap=False, xalign=0.0):
+    lab = Gtk.Label(label=text)
+    lab.set_xalign(xalign)
+    if wrap:
+        lab.set_wrap(True)
+        lab.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        lab.set_max_width_chars(50)  # keeps the right-hand column the same width on every step
+    for c in (css or "").split():
+        lab.add_css_class(c)
+    return lab
+
+
+class Card(Gtk.Box):
+    def __init__(self, title, desc, s, on_pick):
+        super().__init__(orientation=Gtk.Orientation.HORIZONTAL, spacing=int(18 * s))
+        self.add_css_class("card")
+        self.dot = RadioDot(int(26 * s))
+        self.append(self.dot)
+        col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=int(4 * s))
+        col.append(label(title, "card-title"))
+        col.append(label(desc, "card-desc"))
+        self.append(col)
+        click = Gtk.GestureClick()
+        click.connect("released", lambda *_: on_pick())
+        self.add_controller(click)
+
+    def select(self, on):
+        self.dot.set_on(on)
+        if on:
+            self.add_css_class("sel")
+        else:
+            self.remove_css_class("sel")
+
+
+# ---------------------------------------------------------------------------------------------- app
+class SetupWindow(Gtk.ApplicationWindow):
+    def __init__(self, app, s, size):
+        super().__init__(application=app, title="MAS setup")
+        self.s = s
+        self.add_css_class("mas-win")
+        self.set_decorated(False)
+        if size:
+            self.set_default_size(*size)
+        self.disks = []
+        self.step = 1
+        self.name = ""
+        self.use_password = True
+        self.password = ""
+        self.key = ""
+        self.proc = None
+        self.log_lines = []
+        self.finished = False
+        self.error_text = ""
+
+        root = Gtk.Overlay()
+        self.set_child(root)
+        root.set_child(self._build_main())
+
+    # ---- layout
+    def _build_main(self):
+        s = self.s
+        outer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        outer.set_homogeneous(False)
+
+        left_overlay = Gtk.Overlay()
+        left_overlay.add_css_class("mas-left")
+        left_overlay.set_size_request(int(560 * s), -1)
+        left_overlay.set_hexpand(False)
+        left_overlay.set_child(Arcs(s))
+        left_overlay.add_overlay(self._build_left())
+        outer.append(left_overlay)
+
+        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        right.set_hexpand(True)
+        right.set_halign(Gtk.Align.FILL)
+        panel = self._build_right()
+        panel.set_halign(Gtk.Align.CENTER)
+        panel.set_valign(Gtk.Align.CENTER)
+        panel.set_vexpand(True)
+        right.append(panel)
+        outer.append(right)
+        return outer
+
+    def _build_left(self):
+        s = self.s
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        box.set_margin_start(int(64 * s))
+        box.set_margin_end(int(40 * s))
+        box.set_margin_top(int(56 * s))
+        box.set_margin_bottom(int(64 * s))
+
+        brand = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=int(18 * s))
+        if os.path.exists(LOGO):
+            pic = Gtk.Picture.new_for_filename(LOGO)
+            pic.set_content_fit(Gtk.ContentFit.CONTAIN)
+            pic.set_size_request(int(54 * s), int(47 * s))
+            pic.set_can_shrink(True)
+            brand.append(pic)
+        brand.append(label("MAS", "mas-wordmark"))
+        box.append(brand)
+
+        spacer = Gtk.Box()
+        spacer.set_vexpand(True)
+        box.append(spacer)
+
+        box.append(label("FIRST-TIME SETUP", "mas-eyebrow"))
+        gap = Gtk.Box()
+        gap.set_size_request(-1, int(18 * s))
+        box.append(gap)
+        box.append(label("Welcome\nto MAS.", "mas-hero"))
+        gap2 = Gtk.Box()
+        gap2.set_size_request(-1, int(22 * s))
+        box.append(gap2)
+        desc = label("A fast, quiet system built on Linux. Windows apps, Android apps and Ubuntu run side by side.",
+                     "mas-desc", wrap=True)
+        desc.set_max_width_chars(30)
+        desc.set_width_chars(30)
+        box.append(desc)
+
+        spacer2 = Gtk.Box()
+        spacer2.set_vexpand(True)
+        box.append(spacer2)
+
+        for text in ("No open ports. Nobody can connect in by default.",
+                     "A dot appears if anything ever connects.",
+                     "Restore points before every big change."):
+            row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=int(16 * s))
+            row.append(label("✓", "mas-tick"))
+            row.append(label(text, "mas-bullet"))
+            row.set_margin_top(int(12 * s))
+            box.append(row)
+        return box
+
+    def _build_right(self):
+        s = self.s
+        panel = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        panel.set_size_request(int(500 * s), int(520 * s))
+
+        segs = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=int(16 * s))
+        self.segs = []
+        for _ in range(3):
+            seg = Gtk.Box()
+            seg.add_css_class("seg")
+            segs.append(seg)
+            self.segs.append(seg)
+        panel.append(segs)
+
+        self.step_label = label("Step 1 of 3", "mas-step")
+        self.step_label.set_margin_top(int(14 * s))
+        panel.append(self.step_label)
+
+        self.title = label("", "mas-title")
+        self.title.set_margin_top(int(44 * s))
+        panel.append(self.title)
+        self.sub = label("", "mas-sub", wrap=True)
+        self.sub.set_margin_top(int(14 * s))
+        panel.append(self.sub)
+
+        self.stack = Gtk.Stack()
+        self.stack.set_vexpand(True)
+        self.stack.set_margin_top(int(30 * s))
+        self.stack.set_hhomogeneous(True)
+        self.stack.set_vhomogeneous(False)
+        self.stack.add_named(self._page_account(), "1")
+        self.stack.add_named(self._page_password(), "2")
+        self.stack.add_named(self._page_install(), "3")
+        panel.append(self.stack)
+
+        bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=int(14 * s))
+        self.btn_live = Gtk.Button(label="Try MAS without installing")
+        self.btn_live.add_css_class("mas-ghost")
+        self.btn_live.connect("clicked", lambda *_: self.get_application().quit_live())
+        bar.append(self.btn_live)
+        filler = Gtk.Box()
+        filler.set_hexpand(True)
+        bar.append(filler)
+        self.btn_back = Gtk.Button(label="Back")
+        self.btn_back.add_css_class("mas-back")
+        self.btn_back.connect("clicked", lambda *_: self.go(self.step - 1))
+        bar.append(self.btn_back)
+        self.btn_next = Gtk.Button(label="Continue")
+        self.btn_next.add_css_class("mas-go")
+        self.btn_next.connect("clicked", self.on_next)
+        bar.append(self.btn_next)
+        panel.append(bar)
+        self.bar = bar
+        self.go(1)
+        return panel
+
+    # ---- step 1: account + disk
+    def _page_account(self):
+        s = self.s
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=int(8 * s))
+        page.append(label("Account name", "mas-label"))
+        self.name_entry = Gtk.Entry()
+        self.name_entry.add_css_class("mas-entry")
+        self.name_entry.set_placeholder_text("Small letters and numbers, like alex")
+        self.name_entry.connect("changed", lambda *_: self.err_account.set_text(""))
+        self.name_entry.connect("activate", self.on_next)
+        page.append(self.name_entry)
+
+        lab = label("Install MAS on", "mas-label")
+        lab.set_margin_top(int(14 * s))
+        page.append(lab)
+        self.disk_dd = Gtk.DropDown.new_from_strings(["Looking for disks..."])
+        self.disk_dd.add_css_class("mas-dd")
+        self.disk_dd.connect("notify::selected", self.on_disk_changed)
+        page.append(self.disk_dd)
+
+        self.warn = label("", "mas-warn", wrap=True)
+        self.warn.set_margin_top(int(6 * s))
+        page.append(self.warn)
+        self.erase_ok = Gtk.CheckButton(label="Yes, erase this disk")
+        self.erase_ok.add_css_class("mas-check")
+        self.erase_ok.connect("toggled", lambda *_: self.refresh_next())
+        self.erase_ok.set_visible(False)
+        page.append(self.erase_ok)
+        self.err_account = label("", "mas-err", wrap=True)
+        page.append(self.err_account)
+        return page
+
+    # ---- step 2: password
+    def _page_password(self):
+        s = self.s
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=int(12 * s))
+        self.card_pw = Card("Add a password", "Recommended. Asked at every sign-in.", s, lambda: self.pick_password(True))
+        self.card_skip = Card("Skip for now", "Go straight to the desktop. Add one later in Settings.", s,
+                              lambda: self.pick_password(False))
+        page.append(self.card_pw)
+        page.append(self.card_skip)
+
+        fields = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=int(28 * s))
+        fields.set_margin_top(int(18 * s))
+        fields.set_homogeneous(True)
+        self.fields = fields
+        for attr, title, hint in (("pw1", "Password", "At least 8 characters"), ("pw2", "Confirm", "Type it again")):
+            col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=int(10 * s))
+            col.append(label(title, "mas-label"))
+            entry = Gtk.Entry()
+            entry.add_css_class("mas-entry")
+            entry.set_visibility(False)
+            entry.set_input_purpose(Gtk.InputPurpose.PASSWORD)
+            entry.set_placeholder_text(hint)
+            entry.connect("changed", lambda *_: self.err_pw.set_text(""))
+            entry.connect("activate", self.on_next)
+            col.append(entry)
+            fields.append(col)
+            setattr(self, attr, entry)
+        page.append(fields)
+        self.err_pw = label("", "mas-err", wrap=True)
+        page.append(self.err_pw)
+        self.pick_password(True)
+        return page
+
+    def pick_password(self, yes):
+        self.use_password = yes
+        self.card_pw.select(yes)
+        self.card_skip.select(not yes)
+        self.fields.set_sensitive(yes)
+        self.fields.set_opacity(1.0 if yes else 0.45)
+        self.err_pw.set_text("")
+        if yes:
+            self.pw1.grab_focus()
+
+    # ---- step 3: installing / done
+    def _page_install(self):
+        s = self.s
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=int(10 * s))
+        self.prog_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=int(10 * s))
+        self.pb = Gtk.ProgressBar()
+        self.pb.add_css_class("mas-pb")
+        self.prog_box.append(self.pb)
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        self.status = label("Starting...", "mas-hint")
+        self.status.set_hexpand(True)
+        self.status.set_ellipsize(Pango.EllipsizeMode.END)
+        row.append(self.status)
+        self.pct = label("0%", "mas-pct", xalign=1.0)
+        row.append(self.pct)
+        self.prog_box.append(row)
+        page.append(self.prog_box)
+
+        self.done_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=int(12 * s))
+        self.done_box.set_visible(False)
+        self.key_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=int(18 * s))
+        self.key_box.add_css_class("keybox")
+        kcol = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=int(8 * s))
+        kcol.set_hexpand(True)
+        kcol.append(label("Recovery key", "mas-label"))
+        self.key_label = label("", "key", wrap=True)
+        self.key_label.set_selectable(True)
+        kcol.append(self.key_label)
+        kcol.append(label("Write it down or scan the code. It is the only way to reset a forgotten password.",
+                          "mas-hint", wrap=True))
+        self.key_box.append(kcol)
+        self.qr = Gtk.Picture()
+        self.qr.set_size_request(int(130 * s), int(130 * s))
+        self.qr.set_content_fit(Gtk.ContentFit.CONTAIN)
+        self.qr.set_valign(Gtk.Align.CENTER)
+        self.key_box.append(self.qr)
+        self.done_box.append(self.key_box)
+        self.done_note = label("", "mas-hint", wrap=True)
+        self.done_box.append(self.done_note)
+        page.append(self.done_box)
+
+        self.fail_label = label("", "mas-err", wrap=True)
+        self.fail_label.set_visible(False)
+        page.append(self.fail_label)
+        return page
+
+    # ---- navigation
+    def go(self, n):
+        self.step = n
+        self.stack.set_visible_child_name(str(n))
+        for i, seg in enumerate(self.segs, 1):
+            if i <= n:
+                seg.add_css_class("on")
+            else:
+                seg.remove_css_class("on")
+        self.step_label.set_text("Step %d of 3" % n)
+        titles = {
+            1: ("Set up your computer", "Name your account and pick the disk MAS goes on."),
+            2: ("Protect this device", "Add a password to sign in, or skip and go straight to the desktop."),
+            3: ("Setting up MAS", "This takes a few minutes. Keep the computer on."),
+        }
+        t, sub = titles[n]
+        self.title.set_text(t)
+        self.sub.set_text(sub)
+        self.btn_back.set_label("Back")
+        self.btn_back.set_visible(n == 2)
+        self.btn_live.set_visible(n == 1)
+        self.btn_next.set_visible(n != 3)
+        self.btn_next.set_label("Continue")
+        if n == 1:
+            self.name_entry.grab_focus()
+        self.refresh_next()
+
+    def refresh_next(self):
+        ok = True
+        if self.step == 1:
+            disk = self.current_disk()
+            ok = disk is not None and (not disk["has_data"] or self.erase_ok.get_active())
+        self.btn_next.set_sensitive(ok)
+
+    def current_disk(self):
+        i = self.disk_dd.get_selected()
+        return self.disks[i] if 0 <= i < len(self.disks) else None
+
+    def set_disks(self, disks):
+        self.disks = disks
+        if disks:
+            labels = ["%s  -  %d GB  -  %s" % (d["path"], d["size_gb"], d["model"]) for d in disks]
+        else:
+            labels = ["No disk found"]
+        self.disk_dd.set_model(Gtk.StringList.new(labels))
+        self.disk_dd.set_selected(0)
+        self.on_disk_changed()
+        if not disks:
+            self.warn.set_text("No disk of at least %d GB was found. Plug one in, or try MAS without installing." % MIN_DISK_GB)
+
+    def on_disk_changed(self, *_):
+        disk = self.current_disk()
+        self.erase_ok.set_active(False)
+        if disk is None:
+            self.erase_ok.set_visible(False)
+        elif disk["has_data"]:
+            self.warn.set_text("This disk already has files on it. Installing erases everything on %s." % disk["path"])
+            self.warn.remove_css_class("mas-hint")
+            self.warn.add_css_class("mas-warn")
+            self.erase_ok.set_visible(True)
+        else:
+            self.warn.set_text("The whole disk is used by MAS. It is empty now, so nothing is lost.")
+            self.warn.remove_css_class("mas-warn")
+            self.warn.add_css_class("mas-hint")
+            self.erase_ok.set_visible(False)
+        self.refresh_next()
+
+    def on_next(self, *_):
+        if self.finished:
+            self.on_restart()
+            return
+        if self.step == 1:
+            self.name = normalize_name(self.name_entry.get_text())
+            self.name_entry.set_text(self.name)
+            if not NAME_RE.match(self.name):
+                self.err_account.set_text("Pick a name with small letters and numbers, starting with a letter.")
+                return
+            if self.name in RESERVED or user_exists(self.name):
+                self.err_account.set_text("'%s' is taken. Pick another name." % self.name)
+                return
+            if not self.btn_next.get_sensitive():
+                return
+            self.go(2)
+            self.pw1.grab_focus()
+        elif self.step == 2:
+            if self.use_password:
+                p1, p2 = self.pw1.get_text(), self.pw2.get_text()
+                if len(p1) < 8:
+                    self.err_pw.set_text("The password needs at least 8 characters.")
+                    return
+                if p1 != p2:
+                    self.err_pw.set_text("The two passwords are different.")
+                    return
+                self.password = p1
+            else:
+                self.password = ""
+            self.go(3)
+            self.start_install()
+
+    # ---- install
+    def start_install(self):
+        disk = self.current_disk()
+        self.log_lines = []
+        self.key = ""
+        self.finished = False
+        self.error_text = ""
+        self.fail_label.set_visible(False)
+        self.done_box.set_visible(False)
+        self.prog_box.set_visible(True)
+        self.set_progress(1, "Starting...")
+        cmd = ["sudo", "-n", INSTALLER, "--disk", disk["path"], "--user", self.name]
+        if self.use_password:
+            cmd.append("--password")
+        if FAKE:
+            mode = "fail" if os.environ.get("MAS_SETUP_FAKE_FAIL") else str(int(self.use_password))
+            cmd = [sys.executable, os.path.abspath(__file__), "--fake-installer", mode]
+        try:
+            self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                         stderr=subprocess.STDOUT, text=True, bufsize=1)
+            if self.use_password and not FAKE:
+                self.proc.stdin.write(self.password + "\n")
+            self.proc.stdin.close()
+        except OSError as exc:
+            self.fail("Could not start the installer: %s" % exc)
+            return
+        threading.Thread(target=self.read_output, daemon=True).start()
+
+    def read_output(self):
+        for line in self.proc.stdout:
+            GLib.idle_add(self.on_line, line.rstrip("\n"))
+        rc = self.proc.wait()
+        GLib.idle_add(self.on_exit, rc)
+
+    def on_line(self, line):
+        if line.startswith("PROGRESS "):
+            parts = line.split(" ", 2)
+            try:
+                self.set_progress(int(parts[1]), parts[2] if len(parts) > 2 else "")
+            except (ValueError, IndexError):
+                pass
+        elif line.startswith("KEY "):
+            self.key = line[4:].strip()
+        elif line.startswith("ERROR "):
+            self.error_text = line[6:]
+        elif line == "DONE":
+            self.finished = True
+        else:
+            self.log_lines.append(line)
+            self.log_lines = self.log_lines[-60:]
+        return False
+
+    def on_exit(self, rc):
+        if self.finished and rc == 0:
+            self.show_done()
+        else:
+            tail = "\n".join(self.log_lines[-6:])
+            msg = self.error_text or "The installer stopped (code %s)." % rc
+            self.fail(msg + ("\n\n" + tail if tail else ""))
+        return False
+
+    def set_progress(self, pct, text):
+        pct = max(0, min(100, pct))
+        self.pb.set_fraction(pct / 100.0)
+        self.pct.set_text("%d%%" % pct)
+        if text:
+            self.status.set_text(text)
+
+    def show_done(self):
+        self.set_progress(100, "Done")
+        self.prog_box.set_visible(False)
+        self.title.set_text("You're all set")
+        self.sub.set_text("MAS is installed. Restart to start using it.")
+        self.done_box.set_visible(True)
+        self.key_box.set_visible(bool(self.key))
+        if self.key:
+            self.key_label.set_text(self.key)
+            self.show_qr(self.key)
+            self.done_note.set_text("")
+        else:
+            self.done_note.set_text("There is no password, so the sign-in screen has a Sign In button.")
+        self.btn_next.set_visible(True)
+        self.btn_next.set_label("Restart now")
+        self.btn_next.set_sensitive(True)
+        self.btn_live.set_visible(False)
+        self.btn_back.set_visible(False)
+        if not self.key:
+            self.countdown = 10
+            GLib.timeout_add_seconds(1, self.tick_restart)
+
+    def tick_restart(self):
+        self.countdown -= 1
+        self.btn_next.set_label("Restart now (%d)" % max(self.countdown, 0))
+        if self.countdown <= 0:
+            self.on_restart()
+            return False
+        return True
+
+    def show_qr(self, key):
+        if not shutil.which("qrencode"):
+            return
+        fd, png = tempfile.mkstemp(suffix=".png")
+        os.close(fd)
+        try:
+            subprocess.run(["qrencode", "-s", "6", "-m", "2", "-o", png], input=key.encode(), check=True)
+            self.qr.set_filename(png)
+        except (OSError, subprocess.SubprocessError):
+            pass
+        finally:
+            GLib.timeout_add_seconds(5, lambda: (os.path.exists(png) and os.unlink(png), False)[1])
+
+    def on_restart(self, *_):
+        self.get_application().restart()
+
+    def fail(self, text):
+        self.prog_box.set_visible(False)
+        self.title.set_text("That did not work")
+        self.sub.set_text("Nothing is lost. You can try again or use MAS without installing.")
+        self.fail_label.set_text(text)
+        self.fail_label.set_visible(True)
+        self.btn_back.set_visible(True)
+        self.btn_back.set_label("Try again")
+        self.btn_live.set_visible(True)
+        self.btn_next.set_visible(False)
+
+
+class SetupApp(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id="org.mas.Setup")
+        self.code = 10
+        self.win = None
+
+    def do_activate(self):
+        display = Gdk.Display.get_default()
+        mons = display.get_monitors()
+        geo = mons.get_item(0).get_geometry() if mons.get_n_items() else None
+        if WINDOWED:
+            w, h = WINDOWED
+        elif geo:
+            w, h = geo.width, geo.height
+        else:
+            w, h = 1280, 720
+        s = max(0.7, min(w / 1280.0, h / 720.0, 2.0))
+        Gtk.Settings.get_default().set_property("gtk-application-prefer-dark-theme", True)
+        css = Gtk.CssProvider()
+        text = make_css(s)
+        if hasattr(css, "load_from_string"):
+            css.load_from_string(text)
+        else:
+            css.load_from_data(text.encode())
+        Gtk.StyleContext.add_provider_for_display(display, css, Gtk.STYLE_PROVIDER_PRIORITY_USER)
+
+        self.win = SetupWindow(self, s, (w, h))
+        if not WINDOWED:
+            self.win.fullscreen()
+        self.win.present()
+        threading.Thread(target=lambda: GLib.idle_add(self.win.set_disks, list_disks()), daemon=True).start()
+        if FAKE and "--demo" in ARGS:  # testing only: click through the steps by itself
+            demo = ARGS[ARGS.index("--demo") + 1]
+            GLib.timeout_add(900, self.run_demo, demo)
+
+    def run_demo(self, demo):
+        w = self.win
+        w.name_entry.set_text("alex")
+        if demo == "step1-data":
+            w.set_disks([{"path": "/dev/sda", "size_gb": 512, "model": "Samsung SSD", "has_data": True}])
+            return False
+        w.on_next()
+        if demo == "step2-skip":
+            w.pick_password(False)
+        if demo in ("step3", "done", "fail", "step2-skip"):
+            if demo != "step2-skip":
+                w.pw1.set_text("hunter2hunter2")
+                w.pw2.set_text("hunter2hunter2")
+        if demo == "step2-err":
+            w.pw1.set_text("short")
+            w.on_next()
+        if demo in ("step3", "done", "fail"):
+            w.on_next()
+        if demo == "done-nopw":
+            w.pick_password(False)
+            w.on_next()
+        return False
+
+    def quit_live(self):
+        self.code = 10
+        self.quit()
+
+    def restart(self):
+        self.code = 0
+        if FAKE:
+            self.quit()
+            return
+        subprocess.Popen(["sudo", "-n", "systemctl", "reboot"])
+
+
+def fake_installer(mode):
+    import time
+    with_key = mode == "1"
+    steps = [(3, "Preparing the disk..."), (12, "Making the file system..."), (35, "Copying MAS..."),
+             (70, "Copying MAS..."), (80, "Setting up your account..."), (92, "Installing the boot loader..."),
+             (98, "Finishing...")]
+    for pct, text in steps:
+        print("PROGRESS %d %s" % (pct, text), flush=True)
+        time.sleep(0.6)
+        if mode == "fail" and pct >= 35:
+            print("rsync: write failed on /mnt/usr/lib/x: No space left on device", flush=True)
+            print("ERROR Could not copy the system to the disk.", flush=True)
+            sys.exit(1)
+    if with_key:
+        print("KEY ABCD-EFGH-IJKL-MNOP-QRST-UVWX-YZ", flush=True)
+    print("DONE", flush=True)
+
+
+def main():
+    if "--fake-installer" in ARGS:
+        fake_installer(ARGS[ARGS.index("--fake-installer") + 1])
+        return 0
+    if not os.path.isdir(LIVE_MARK) and not WINDOWED and not FAKE and "--force" not in ARGS:
+        print("mas-setup: this is not the live ISO, nothing to install.", file=sys.stderr)
+        return 10
+    app = SetupApp()
+    app.run([])
+    return app.code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

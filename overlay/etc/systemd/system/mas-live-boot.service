@@ -1,0 +1,13 @@
+[Unit]
+Description=MAS: start the installed MAS instead of the live ISO (when it is already installed)
+ConditionPathExists=/run/archiso
+After=local-fs.target systemd-udevd.service
+Before=display-manager.service sddm.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/mas-live-boot
+TimeoutStartSec=60
+
+[Install]
+WantedBy=multi-user.target

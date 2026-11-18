@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # mas-theme-check - runs before the login screen starts. It keeps the MAS login screen when that looks
-# healthy, and otherwise switches to the standard Breeze login screen (the reason goes to the system log:
+# healthy, and otherwise switches to the plain built-in SDDM login screen (maldives) (the reason goes to the system log:
 #   journalctl -t mas-theme).
 # Boot option  mas.classic  forces the standard login screen.
 THEME_DIR="${MAS_THEME_DIR:-/usr/share/sddm/themes/mas}"
@@ -9,36 +9,23 @@ CMDLINE="${MAS_CMDLINE:-/proc/cmdline}"
 QMLLINT="${MAS_QMLLINT:-/usr/lib/qt6/bin/qmllint}"
 WATCHDOG_FLAG="${MAS_WATCHDOG_FLAG:-/run/mas-theme-fallback}"
 
-SESSION_CONF="${MAS_SESSION_CONF:-/etc/sddm.conf.d/zz-mas-session.conf}"
-WRAPPER="${MAS_WRAPPER:-/usr/local/bin/mas-wayland-session}"
-REAL_WRAPPER="${MAS_REAL_WRAPPER:-/usr/share/sddm/scripts/wayland-session}"
-
 log() { logger -t mas-theme "$*" 2>/dev/null || true; }
 
-# The session wrapper (see mas-wayland-session) is only switched on when both wrappers are there,
-# so a missing file can never stop sessions from starting. Boot option mas.nowrap turns it off.
-if [[ -x "$WRAPPER" && -x "$REAL_WRAPPER" ]] && ! grep -qw 'mas\.nowrap' "$CMDLINE" 2>/dev/null; then
-  mkdir -p "$(dirname "$SESSION_CONF")"
-  printf '[Wayland]\nSessionCommand=%s\n' "$WRAPPER" > "$SESSION_CONF"
-else
-  rm -f "$SESSION_CONF"
-fi
-
-use_breeze() {
+use_plain() {
   mkdir -p "$(dirname "$FALLBACK")"
-  printf '[Theme]\nCurrent=breeze\n' > "$FALLBACK"
+  printf '[Theme]\nCurrent=maldives\n' > "$FALLBACK"
   log "using the standard login screen: $1"
   exit 0
 }
 
-if grep -q 'mas\.classic' "$CMDLINE" 2>/dev/null; then use_breeze "boot option mas.classic"; fi
-if [[ ! -f "$THEME_DIR/Main.qml" || ! -f "$THEME_DIR/metadata.desktop" ]]; then use_breeze "theme files are missing"; fi
-if [[ -e "$WATCHDOG_FLAG" ]]; then use_breeze "the watchdog saw a problem with it"; fi
+if grep -q 'mas\.classic' "$CMDLINE" 2>/dev/null; then use_plain "boot option mas.classic"; fi
+if [[ ! -f "$THEME_DIR/Main.qml" || ! -f "$THEME_DIR/metadata.desktop" ]]; then use_plain "theme files are missing"; fi
+if [[ -e "$WATCHDOG_FLAG" ]]; then use_plain "the watchdog saw a problem with it"; fi
 
 if [[ -x "$QMLLINT" ]]; then
   out="$("$QMLLINT" "$THEME_DIR/Main.qml" 2>&1)"
   if printf '%s\n' "$out" | grep -q '^Error'; then
-    use_breeze "qmllint found an error: $(printf '%s' "$out" | grep '^Error' | head -n2 | tr '\n' ' ')"
+    use_plain "qmllint found an error: $(printf '%s' "$out" | grep '^Error' | head -n2 | tr '\n' ' ')"
   fi
 fi
 

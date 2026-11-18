@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=MAS live (first-time setup)
+Comment=Live ISO: first-time setup, then the desktop
+Exec=/usr/local/bin/mas-live-session
+DesktopNames=XFCE

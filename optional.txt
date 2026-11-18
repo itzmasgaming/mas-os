@@ -1,37 +1,13 @@
 # Optional packages: used when they exist in the Arch repositories, skipped (with a message) when they do not.
-
-# More archive formats (.7z)
-7zip
-
-# Lets the connection dot sit on top of everything in the top-right corner
-gtk4-layer-shell
-
-# Restore points: a snapshot before every update, and boot into an old snapshot
-snap-pac
-grub-btrfs
-
-# Simple XFCE desktop (boot menu choice 5). Works in every virtual machine where Plasma stays black.
-xfce4-session
-xfce4-panel
-xfwm4
-xfdesktop
-xfce4-settings
-thunar
-xfce4-terminal
-network-manager-applet
-xfce4-pulseaudio-plugin
-# notifications (the connection dot / Shield messages) and the "ask for password" window in XFCE
-xfce4-notifyd
-polkit-gnome
-
-# Scan the recovery key QR code with a camera when resetting a password
-zbar
-
-# Nice to have
-sddm-kcm
-kde-gtk-config
-fuse-overlayfs
-noto-fonts-emoji
-
-# Boot logo instead of the [ OK ] text
+# Boot logo
 plymouth
+# Nicer font for the setup screen (falls back to Noto Sans)
+inter-font
+# More Wine helpers
+lib32-v4l-utils
+lib32-sdl2-compat
+# Restore point entries in the boot menu, and a restore point before/after every pacman update
+grub-btrfs
+snap-pac
+# Windows partitions
+ntfs-3g

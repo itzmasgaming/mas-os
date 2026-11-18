@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# build-mas.sh - builds the MAS OS ISO.
+# build-mas.sh - builds the MAS OS ISO (Arch Linux base, XFCE desktop, Wine).
+# Boot the ISO: the first-time setup starts by itself and installs MAS. There is no installer to open.
 # Run it on Arch Linux (or inside an Arch Linux container) as root:
 #     sudo bash build-mas.sh
 # The finished ISO is written to ./out/
@@ -58,6 +59,11 @@ if [[ -n "$(tail -c1 "$PKGFILE")" ]]; then echo >> "$PKGFILE"; fi
   echo "# --- MAS OS packages ---"
   grep -vE '^\s*(#|$)' "$HERE/packages.txt"
 } >> "$PKGFILE"
+# VirtualBox: the full guest tools (clipboard, window resizing) replace the "-nox" ones from the base ISO
+if pacman -Si virtualbox-guest-utils >/dev/null 2>&1; then
+  sed -i '/^virtualbox-guest-utils-nox$/d' "$PKGFILE"
+  echo "virtualbox-guest-utils" >> "$PKGFILE"
+fi
 HAVE_PLYMOUTH=0
 while read -r pkg; do
   if pacman -Si "$pkg" >/dev/null 2>&1; then
@@ -69,18 +75,11 @@ while read -r pkg; do
 done < <(grep -vE '^\s*(#|$)' "$HERE/optional.txt")
 sort -u -o "$PKGFILE.sorted" <(grep -vE '^\s*(#|$)' "$PKGFILE") && mv "$PKGFILE.sorted" "$PKGFILE"
 
-echo "==> Adding the MAS layer (branding, launchers, firewall, shield)"
+echo "==> Adding the MAS layer (setup screen, installer, login screen, launchers, firewall, shield)"
 AIR="$PROFILE/airootfs"
 cp -a "$HERE/overlay/." "$AIR/"
 cp -a "$HERE/live/." "$AIR/"
-# Copy used later by the installer (mas-install / mas-apply)
-mkdir -p "$AIR/usr/share/mas-layer"
-cp -a "$HERE/overlay" "$AIR/usr/share/mas-layer/overlay"
-cp "$HERE/packages.txt" "$HERE/optional.txt" "$AIR/usr/share/mas-layer/"
-
-# Makes the "Add a password or not?" screen (mas-welcome) appear in the live session
-mkdir -p "$AIR/var/lib/mas" "$AIR/var/lib/mas/flags"
-: > "$AIR/var/lib/mas/firstrun-pending"
+mkdir -p "$AIR/var/lib/mas" "$AIR/home/mas"
 # The live account "mas" has no password and is never asked for an administrator password
 : > "$AIR/var/lib/mas/default-open"
 # The login screen reads this list to show a "Sign In" button for accounts without a password
@@ -110,6 +109,10 @@ ensure_line "$AIR/etc/gshadow" wheel 'wheel:!*::'
 add_member "$AIR/etc/group"   wheel mas
 add_member "$AIR/etc/gshadow" wheel mas
 
+echo "==> Removing remote-login leftovers of the base ISO (no open ports)"
+find "$AIR/etc/systemd/system" -name 'sshd.service' -delete 2>/dev/null || true
+rm -f "$AIR/etc/ssh/sshd_config.d/10-archiso.conf"
+
 echo "==> Turning on services"
 SYS="$AIR/etc/systemd/system"
 mkdir -p "$SYS/multi-user.target.wants"
@@ -119,11 +122,9 @@ ln -sf /usr/lib/systemd/system/graphical.target       "$SYS/default.target"
 ln -sf /usr/lib/systemd/system/sddm.service           "$SYS/display-manager.service"
 ln -sf /usr/lib/systemd/system/NetworkManager.service "$SYS/multi-user.target.wants/NetworkManager.service"
 ln -sf /usr/lib/systemd/system/nftables.service       "$SYS/multi-user.target.wants/nftables.service"
-# picks safe drawing inside virtual machines (fixes the black screen) - the unit file comes from overlay/
-ln -sf /etc/systemd/system/mas-gfx.service            "$SYS/multi-user.target.wants/mas-gfx.service"
-# live only: asks at boot which graphics mode to use (the unit skips itself on an installed system)
-ln -sf /etc/systemd/system/mas-gfx-ask.service        "$SYS/multi-user.target.wants/mas-gfx-ask.service"
-# login screen safety net: falls back to the plain Breeze login if the MAS login theme is broken
+# live only: if MAS is already installed on a disk, start it instead of showing the setup again
+ln -sf /etc/systemd/system/mas-live-boot.service      "$SYS/multi-user.target.wants/mas-live-boot.service"
+# login screen safety net: falls back to the plain SDDM login if the MAS login theme is broken
 ln -sf /etc/systemd/system/mas-theme-check.service    "$SYS/multi-user.target.wants/mas-theme-check.service"
 ln -sf /etc/systemd/system/mas-theme-guard.service    "$SYS/multi-user.target.wants/mas-theme-guard.service"
 
@@ -145,14 +146,8 @@ echo "==> File permissions"
 PERMS="$WORK/perms.txt"
 {
   echo '  ["/etc/sudoers.d/mas-live"]="0:0:0440"'
-  echo '  ["/etc/sudoers.d/mas-welcome"]="0:0:0440"'
   echo '  ["/etc/sudoers.d/10-mas-wheel"]="0:0:0440"'
-  echo '  ["/var/lib/mas/flags"]="0:0:1777"'
   echo '  ["/home/mas"]="1000:1000:0700"'
-  echo '  ["/home/mas/.config"]="1000:1000:0755"'
-  echo '  ["/home/mas/.config/kscreenlockerrc"]="1000:1000:0644"'
-  echo '  ["/home/mas/Desktop"]="1000:1000:0755"'
-  echo '  ["/home/mas/Desktop/install-mas.desktop"]="1000:1000:0755"'
   for f in "$HERE"/overlay/usr/local/bin/*; do
     echo "  [\"/usr/local/bin/$(basename "$f")\"]=\"0:0:0755\""
   done

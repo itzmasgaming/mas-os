@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mas-accounts - create and delete accounts. Works on Plasma and on XFCE.
+# mas-accounts - create and delete accounts. Dialogs come from zenity (XFCE).
 # You need to be an administrator. The default account "mas" (no password) is one.
 #
 # Typical use: log in as "mas", create your own administrator account, log out, log in as your new
@@ -13,13 +13,16 @@ DEFAULT=mas
 TITLE="MAS accounts"
 me="$(id -un)"
 
-if ! command -v kdialog >/dev/null 2>&1; then
-  echo "mas-accounts needs kdialog. In a terminal you can use: sudo useradd -m -G wheel NAME ; sudo passwd NAME" >&2
+if ! command -v zenity >/dev/null 2>&1; then
+  echo "mas-accounts needs zenity. In a terminal you can use: sudo useradd -m -G wheel NAME ; sudo passwd NAME" >&2
   exit 1
 fi
 
-say()   { kdialog --title "$TITLE" --msgbox "$1"; }
-sorry() { kdialog --title "$TITLE" --sorry "$1"; }
+say()        { zenity --info --no-wrap --title "$TITLE" --text "$1"; }
+sorry()      { zenity --error --no-wrap --title "$TITLE" --text "$1"; }
+ask_text()   { zenity --entry --title "$TITLE" --text "$1"; }
+ask_secret() { zenity --entry --hide-text --title "$TITLE" --text "$1"; }
+ask_yes()    { zenity --question --no-wrap --title "$TITLE" --text "$1"; }
 
 normal_users() { awk -F: '$3>=1000 && $3<60000 {print $1}' "$PASSWD_FILE"; }
 
@@ -37,7 +40,7 @@ get_admin() {
   fi
   local pw
   for _ in 1 2 3; do
-    pw="$(kdialog --title "$TITLE" --password "Password of $me (administrator):")" || return 1
+    pw="$(ask_secret "Password of $me (administrator):")" || return 1
     if printf '%s\n' "$pw" | $SUDO -S -v 2>/dev/null; then return 0; fi
     sorry "That password is not right."
   done
@@ -45,8 +48,8 @@ get_admin() {
 }
 
 create_account() {
-  local name p1 p2 admin
-  name="$(kdialog --title "$TITLE" --inputbox "Name for the new account (small letters and numbers, no spaces):")" || return 0
+  local name p1 p2 admin kind
+  name="$(ask_text "Name for the new account (small letters and numbers, no spaces):")" || return 0
   if [[ ! "$name" =~ ^[a-z_][a-z0-9_-]{0,30}$ ]]; then
     sorry "That name is not allowed. Start with a small letter and use only small letters, numbers, - and _."
     return 0
@@ -55,16 +58,17 @@ create_account() {
     sorry "An account called '$name' already exists."
     return 0
   fi
-  kdialog --title "$TITLE" --yes-label "Administrator" --no-label "Standard" \
-    --yesno $'Should this account be an administrator?\n\nAn administrator can install software and create or delete accounts.\nA standard account cannot.'
-  admin=$?
-  if [[ $admin -gt 1 ]]; then return 0; fi
+  kind="$(zenity --list --title "$TITLE" --text "What kind of account is this?" --hide-header \
+    --column Key --column Kind --hide-column=1 --print-column=1 \
+    admin "Administrator - can install software and create or delete accounts" \
+    standard "Standard - everyday use")" || return 0
+  if [[ "$kind" == admin ]]; then admin=0; else admin=1; fi
   while true; do
-    p1="$(kdialog --title "$TITLE" --password "Password for '$name' (leave empty for no password):")" || return 0
+    p1="$(ask_secret "Password for '$name' (leave empty for no password):")" || return 0
     if [[ -z "$p1" ]]; then
-      if kdialog --title "$TITLE" --yesno "Create '$name' with NO password?"; then break; else continue; fi
+      if ask_yes "Create '$name' with NO password?"; then break; else continue; fi
     fi
-    p2="$(kdialog --title "$TITLE" --password "Type the same password again:")" || return 0
+    p2="$(ask_secret "Type the same password again:")" || return 0
     if [[ "$p1" == "$p2" ]]; then break; fi
     sorry "The two passwords are different. Try again."
   done
@@ -86,7 +90,7 @@ create_account() {
 }
 
 delete_account() {
-  local u target entries=() others=0 rc
+  local u target entries=() others=0 rc out
   for u in $(normal_users); do
     if [[ "$u" == "$me" ]]; then continue; fi
     if is_admin "$u"; then entries+=("$u" "$u (administrator)"); else entries+=("$u" "$u"); fi
@@ -95,7 +99,7 @@ delete_account() {
     sorry "There is no other account to delete. You cannot delete the account you are using."
     return 0
   fi
-  target="$(kdialog --title "$TITLE" --menu "Which account do you want to delete?" "${entries[@]}")" || return 0
+  target="$(zenity --list --title "$TITLE" --text "Which account do you want to delete?" --hide-header --column Key --column Account --hide-column=1 --print-column=1 "${entries[@]}")" || return 0
   if logged_in "$target"; then
     sorry "'$target' is signed in right now. Log that account out first."
     return 0
@@ -109,14 +113,17 @@ delete_account() {
       return 0
     fi
   fi
-  kdialog --title "$TITLE" --yes-label "Delete account and files" --no-label "Delete account, keep files" --cancel-label "Cancel" \
-    --yesnocancel "Delete the account '$target'?"$'\n\n'"Its files (the home folder) can be deleted too. This cannot be undone."
+  out="$(zenity --question --no-wrap --title "$TITLE" --ok-label "Delete account and files" --cancel-label "Cancel" \
+    --extra-button "Delete account, keep files" \
+    --text "Delete the account '$target'?"$'\n\n'"Its files (the home folder) can be deleted too. This cannot be undone.")"
   rc=$?
-  case "$rc" in
-    0) $SUDO userdel -r "$target" ;;
-    1) $SUDO userdel "$target" ;;
-    *) return 0 ;;
-  esac
+  if [[ $rc -eq 0 ]]; then
+    $SUDO userdel -r "$target"
+  elif [[ "$out" == "Delete account, keep files" ]]; then
+    $SUDO userdel "$target"
+  else
+    return 0
+  fi
   $SUDO /usr/local/bin/mas-passwordless remove "$target"
   if [[ "$target" == "$DEFAULT" ]]; then
     $SUDO rm -f "$GATE" /etc/sudoers.d/mas-default-open /etc/sddm.conf.d/mas-default-autologin.conf
@@ -129,7 +136,7 @@ delete_account() {
 
 get_admin || exit 1
 while true; do
-  choice="$(kdialog --title "$TITLE" --menu "What do you want to do?" create "Create a new account" delete "Delete an account")" || exit 0
+  choice="$(zenity --list --title "$TITLE" --text "What do you want to do?" --hide-header --column Key --column Action --hide-column=1 --print-column=1 create "Create a new account" delete "Delete an account")" || exit 0
   case "$choice" in
     create) create_account ;;
     delete) delete_account ;;

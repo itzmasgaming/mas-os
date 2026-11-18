@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# mas-live-boot - runs at the start of the live ISO. If MAS is already installed on a disk of this
+# computer (for example the VM or BIOS still boots the ISO first after the install), jump straight into the
+# installed system instead of showing the setup again.
+#
+# Boot options for the ISO:  mas.reinstall  = ignore the installed system (to install again)
+#                            mas.nokexec    = never jump
+CMDLINE="${MAS_CMDLINE:-/proc/cmdline}"
+if grep -qwE 'mas\.reinstall|mas\.nokexec' "$CMDLINE" 2>/dev/null; then exit 0; fi
+command -v kexec >/dev/null 2>&1 || exit 0
+udevadm settle -t 10 >/dev/null 2>&1 || true
+
+dev="$(blkid -L MAS_ROOT 2>/dev/null | head -n1)"
+[[ -n "$dev" && -b "$dev" ]] || exit 0
+
+mnt=/run/mas-installed
+mkdir -p "$mnt"
+mount -o ro,subvol=@ "$dev" "$mnt" >/dev/null 2>&1 || exit 0
+kernel="$mnt/boot/vmlinuz-linux"
+initrd="$mnt/boot/initramfs-linux.img"
+if [[ ! -f "$kernel" || ! -f "$initrd" ]]; then umount "$mnt" 2>/dev/null; exit 0; fi
+uuid="$(blkid -s UUID -o value "$dev")"
+logger -t mas-live-boot "MAS is installed on $dev, starting it"
+if kexec -l "$kernel" --initrd="$initrd" \
+     --command-line="root=UUID=$uuid rootflags=subvol=@ rw quiet splash loglevel=3"; then
+  umount "$mnt" 2>/dev/null   # the kernel and boot image are in memory now
+  systemctl kexec
+  sleep 30
+else
+  umount "$mnt" 2>/dev/null
+fi
+exit 0

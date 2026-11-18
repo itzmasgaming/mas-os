@@ -1,0 +1,13 @@
+[Unit]
+Description=MAS: set up the package keyring (first start of an installed system)
+ConditionPathExists=!/etc/pacman.d/gnupg/trustdb.gpg
+ConditionPathExists=!/run/archiso
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/pacman-key --init
+ExecStart=/usr/bin/pacman-key --populate archlinux
+
+[Install]
+WantedBy=multi-user.target

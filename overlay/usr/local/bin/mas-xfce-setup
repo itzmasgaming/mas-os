@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# mas-xfce-setup - runs at the first logins in the XFCE desktop: MAS wallpaper.
+# mas-xfce-setup - runs at the first logins in the XFCE desktop: MAS wallpaper and Wine folder.
 # It tries for about a minute (xfdesktop may not have written its settings yet) and only remembers
 # that it is done when the wallpaper was really applied.
 MARK="$HOME/.config/mas/xfce-setup-done"
@@ -28,6 +28,11 @@ create_new() { # no properties yet: create them for every connected monitor
   done < <(xrandr --query 2>/dev/null | awk '/ connected/{print $1}')
   echo "$n"
 }
+
+# Get Windows apps ready: create the Wine folder once in the background, so the first .exe starts fast
+if [[ ! -e "$HOME/.config/mas/wine-ready" ]] && command -v wineboot >/dev/null 2>&1; then
+  ( WINEDEBUG=-all wineboot -u >/dev/null 2>&1 && touch "$HOME/.config/mas/wine-ready" ) &
+fi
 
 sleep 4
 for _ in $(seq 1 15); do

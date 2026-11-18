@@ -1,118 +1,66 @@
-# MAS OS ISO builder (v0.1)
+# MAS OS ISO builder (v0.2 - automatic setup)
 
-This folder turns into the **MAS OS ISO** (a disk image you can start in a virtual machine or from a USB stick).
-It builds MAS on top of Arch Linux with a KDE Plasma desktop that is restyled with your logo.
+Boot the ISO and MAS sets itself up. **There is no installer to open.**
 
-> **Status: untested.** This kit was written without being able to run a build or boot the result.
-> The first build may stop with an error. If it does, send the error text and it will be fixed.
+> **Status: not booted yet.** This kit was written without being able to build or boot an Arch ISO.
+> What was tested: the setup screen (rendered at 3 sizes), the login screen (with and without a password),
+> and the disk part of the installer on a real loop disk (partitions, Btrfs, copy, fstab, account, recovery key).
+> NOT tested: the Arch-only steps (`arch-chroot`, `mkinitcpio`, `grub-install`) and the kexec jump.
+> If the first build or boot fails, send the error text (the install log is `/var/log/mas-install.log`).
 
-## What the ISO contains
+## What happens now
 
-| You asked for | How it is done |
+1. **Boot the ISO.** No menu to answer, no desktop to click through. The **First-time setup** covers the screen.
+2. **Step 1** - name your account, pick the disk (it picks the first free one for you).
+3. **Step 2** - **Protect this device**: add a password, or skip it.
+4. **Step 3** - MAS installs itself (a few minutes, no internet needed). You get the recovery key if you set a password. Press **Restart now**.
+5. **Every start after that** shows the MAS login screen: an account **without a password** shows only a **Sign In** button, an account **with a password** shows the password box.
+
+If the VM or PC still boots the ISO after the install, MAS notices it is already installed and jumps into the installed system by itself (kexec). To install again, add `mas.reinstall` to the boot options of the ISO.
+
+"Try MAS without installing" (bottom left of step 1) opens the live XFCE desktop instead. Start menu > **Install MAS** runs the setup again.
+
+## What the screenshot with the mouse was
+
+That was the **XFCE** desktop (the mouse logo is XFCE's). It is the simple desktop that the old ISO started inside VirtualBox, because KDE Plasma 6.8 goes black in virtual machines. The system under it **is** Arch Linux (built with `archiso`). In v0.2 XFCE is the only desktop, so what you see in VirtualBox is what everybody gets.
+
+## What is inside
+
+| Wanted | How |
 |---|---|
-| Linux base, fast, no preinstalled apps | Arch Linux + a minimal KDE Plasma. Only a file manager (Dolphin), terminal (Konsole), archive tool (Ark) and Settings are included |
-| `.exe` / `.msi` apps and games | **Wine** (double-click a `.exe`) |
-| `.zip` `.rar` `.7z` | Ark, unzip, unrar, 7zip |
-| "Ubuntu LTS" icon opens a small command window | `Ubuntu LTS` launcher: a 100x28 terminal running an Ubuntu container (Distrobox). First open downloads Ubuntu |
-| Brave included | `Brave` launcher installs Brave from Flathub the first time you open it (needs internet) and makes it the default browser |
-| Protected, no one can connect in | `nftables` firewall: all incoming connections are blocked, replies to your own connections are allowed |
-| Dot in the top-right when something connects | **MAS Shield** (`mas-shield`): an amber dot appears in the top-right corner while something is connected in, plus a notification |
-| Windows-style right-click menus, window buttons, light/dark mode | Built into KDE Plasma. Light/dark: Settings > Colors & Themes. The MAS wallpaper switches with it |
-| Logo as default background | `MAS` wallpaper (dark and light versions), also on the login screen and the start button |
-| Sandbox VM that resets when closed | `Sandbox` launcher: a throw-away QEMU virtual machine. Put an `.iso`, `.qcow2` or `.img` in `~/Sandbox` first. It asks if the Sandbox may use the internet. With internet on, the guest can also reach programs that listen on this computer (a QEMU limit); choose **No internet** for anything you do not trust |
-| Restore points | Btrfs + Snapper. `mas-apply` creates the Snapper config for `/` itself (when the install uses Btrfs), and a snapshot is taken before every update. **Only if you chose Btrfs in archinstall**; on any other file system restore points are OFF and the installer prints a note |
-| First-time screen: add a password or not | `mas-welcome`: a window at the first login with **Add password / No password / Ask me later**. It also appears in the live session (every time you start the ISO) so you can see it. Live passwords are empty: just press Enter. The live session never locks itself |
-| No account at first start | An installed MAS has **no account**. The first start shows **Create your account** (like Windows): you choose a name and a password. That password is **also the root password**. Skip the password and root has none either. A recovery key is shown if you set a password. A temporary account `mas-setup` runs that screen and is deleted when it finishes. The **live ISO** still uses a built-in account `mas` (no password) only to run the installer |
-| Private accounts | Every home folder is private (mode 0700): one account cannot open another account's files, so a virus in one standard account cannot read the others. **Administrators** (group `wheel`, which includes the first account) can still reach everything with `sudo`, and an administrator with no password gives no protection. Make everyday extra accounts **Standard**. Start menu > **Accounts (create or delete)** creates and deletes accounts. It refuses to delete an account that is signed in, or the last administrator |
-| The password is also the root password | The password chosen in **Create your account** is set for your account and for `root`. No password clears both |
-| Recovery key (forgot password) | After you add a password, a window shows a **recovery key** and a **QR code** (scan it with your phone to save a copy). On an installed MAS, press **R** within 3 seconds at the "Forgot your password?" message that shows before the login screen, type the key, and choose a new password. The old key then stops working and you get a new one. The recovery key is typed at the start-up screen, so it works even though the boot logo is showing. If the key press is not noticed, edit the boot entry and add `mas.recovery` to the boot options: it goes straight to the reset. The live session has its own entry (Start menu > **Reset live-session password**) which only affects the live session, not an installed MAS. A camera can scan the QR code if the computer has one. Make a new key any time: `sudo mas-recovery new` |
-| MAS login screen | A custom login screen (theme `mas`). An account **without a password** shows a **Sign In** button instead of a password box. An account **with a password** shows the box. A wrong password shows **Loading...** and then **Wrong password. Try again.** and stays on the login screen (it does not go black). The list of accounts without a password is `/var/lib/mas/passwordless`; it is kept up to date by the welcome window and the Accounts tool. Safety net: if the theme looks broken, MAS switches to the standard login screen by itself (`journalctl -t mas-theme` says why). Boot option `mas.classic` forces the standard one |
-| Boot logo | A Windows-style boot screen is shown while the computer starts: black background, the MAS logo in the middle and a ring of white dots circling under it, instead of the `[ OK ]` lines (Plymouth). It is in the live ISO and added to the installed system by `mas-apply`. To see the text again, press **Esc** during boot, or add `plymouth.enable=0` to the boot options. If the `plymouth` package is not found when building, MAS simply builds without the logo |
-| Install it on a disk | `Install MAS` icon on the live desktop |
+| Runs `.exe` / `.msi` | **Wine** + Wine Mono + Gecko + winetricks + 32-bit audio/graphics libraries. Double-click a `.exe`. The Wine folder is prepared in the background at the first login |
+| Fast, quiet, Linux base | Arch Linux, XFCE on X11, PipeWire audio. No extra apps |
+| Closed by default | `nftables` blocks everything coming in. Nothing listens (the ISO's SSH is removed) |
+| Dot when something connects | **MAS Shield**: an amber dot at the top right of the screen + a notification |
+| Restore points | Btrfs (`@`, `@home`, `@snapshots`) + Snapper |
+| Recovery key | Shown after step 3 (text + QR). Reset a forgotten password at the "Forgot your password?" prompt (press **R**) |
+| Password = root password | One password for your account and `root`. No password clears both |
+| Archives, Ubuntu LTS, Sandbox VM, Brave | `.zip/.rar` (Xarchiver), Ubuntu LTS window (Distrobox), Sandbox (QEMU), Brave (Flatpak, first open) |
+| Virtual machines | VirtualBox guest tools (clipboard, window resize), QEMU and VMware agents |
 
-## Step 1 - Build the ISO
+## Build the ISO
 
-You need **Arch Linux** to build it. Pick one way.
+**GitHub (nothing to install):** upload this folder to a public repository (keep `.github`), open **Actions > Build MAS ISO > Run workflow**, wait 30-60 minutes, download **MAS-ISO**.
 
-### Option A - GitHub does the building (nothing to install on Windows)
+**Arch machine:** `sudo bash build-mas.sh` (needs about 15 GB free). **Ubuntu/other with Docker:** `bash run-docker.sh`. The ISO appears in `out/`.
 
-1. Create a **public** repository on GitHub and upload everything in this folder (keep the `.github` folder).
-2. Open the repository's **Actions** tab, choose **Build MAS ISO**, press **Run workflow**.
-3. Wait (about 30 to 60 minutes). When it turns green, open the run and download the **MAS-ISO** file at the bottom. It is a zip with the `.iso` inside. It is about 2.5 to 3 GB.
+## Try it in VirtualBox
 
-### Option B - Build on an Arch Linux machine or Arch VM
+New VM: Linux / Arch Linux (64-bit), 4 GB RAM or more, 2 CPUs, **40 GB disk**, **Enable EFI** on, Graphics Controller **VMSVGA**, 3D acceleration **off**. Put the ISO in the optical drive and start it. The installer erases the virtual disk only.
 
-```
-sudo pacman -S git
-# copy this folder to the machine, then inside it:
-sudo bash build-mas.sh
-```
+## Files you may want to change
 
-The ISO appears in `out/` (for example `out/mas-2026.11.13-x86_64.iso`). It needs about 15 GB of free disk space.
-
-### Option C - Ubuntu (or any Linux that is not Arch), using Docker
-
-Open a terminal inside this folder and type:
-
-```
-bash run-docker.sh
-```
-
-It installs Docker if needed, builds the ISO in a temporary Arch container, and leaves the ISO in `out/`.
-
-## Step 2 - Try it in VirtualBox (your Windows files are not touched)
-
-1. VirtualBox > **New**. Type: Linux, Version: Arch Linux (64-bit).
-2. 4 GB RAM or more, 2 CPUs or more, a 40 GB virtual disk.
-3. Settings > System > tick **Enable EFI**.
-4. Settings > Display: Graphics Controller **VMSVGA**, Video Memory **128 MB**, and leave **Enable 3D Acceleration OFF** (MAS draws with the CPU inside a virtual machine, which is the reliable way in VirtualBox).
-5. Settings > Storage: put the MAS ISO in the optical drive. Start the VM.
-6. Pick **MAS OS install medium**. After a minute you get the MAS desktop with your logo.
-
-Inside a virtual machine MAS now starts the simple XFCE desktop on its own (`mas-gfx`), because Plasma is unreliable on virtual graphics cards. On a real computer it uses Plasma with the graphics card as normal.
-
-Heavy games need real hardware or a GPU. Expect them not to work inside VirtualBox.
-
-### Black screen with only a mouse cursor?
-
-After the first boot menu, MAS shows its own menu on a text screen: **How should the desktop start?**
-
-- **1** Automatic (nothing pressed for 12 seconds also means 1)
-- **2** Safe: Plasma drawn by the CPU. Try this if the screen goes black.
-- **3** OpenGL on the CPU
-- **4** Graphics card (real computers)
-- **5** Simple desktop: **XFCE** instead of Plasma. It works in every virtual machine, so use it if 1 and 2 stay black. Same apps, same launchers, same wallpaper, plainer look.
-- **6** Troubleshoot: starts normally, stops the desktop after about a minute and prints a report about what went wrong on the second text console (Right Ctrl + F2 shows it again).
-
-Why: KDE Plasma 6.8 and newer is Wayland only, and VirtualBox's virtual graphics card is known to break it. XFCE runs on X11 and does not have that problem.
-
-To skip that menu or set the mode by hand:
-
-1. Shut the VM down, then in Display settings make sure 3D Acceleration is **off** and Graphics Controller is **VMSVGA**.
-2. Start it again. At the boot menu press **e** (UEFI) or **Tab** (BIOS) and add one of these to the end of the line, then continue the boot:
-   - `mas.gfx=basic` (CPU drawing, most reliable)
-   - `mas.gfx=soft` (OpenGL on the CPU)
-   - `mas.gfx=normal` (use the virtual graphics card as is)
-3. Still black? Press **Right Ctrl + F3** to get a text console, log in as `mas` (no password) and run `mas-debug`. Send a screenshot of what it prints.
-
-On a text console you can also change the mode for good with `sudo mas-gfx basic` (or `soft`, `normal`, `auto`) followed by `sudo systemctl restart sddm`.
-
-## Step 3 - Install it on a disk
-
-On the live desktop, double-click **Install MAS** and follow the steps. It starts the Arch installer, then adds MAS on top.
-**It erases the disk you choose.** In a VM that is only the virtual disk.
+| File | What |
+|---|---|
+| `overlay/usr/local/bin/mas-setup` | The first-time setup screen (GTK4, colours and texts at the top / in `make_css`) |
+| `overlay/usr/local/bin/mas-install-auto` | The automatic installer (disk layout, what is copied, boot loader) |
+| `overlay/usr/local/bin/mas-live-boot` | Jumps into an installed MAS when the ISO is started again |
+| `overlay/usr/share/sddm/themes/mas/Main.qml` | The login screen |
+| `packages.txt` / `optional.txt` | Packages |
 
 ## Not done yet
 
-- Plasma 6.8 and newer have no X11 session, so MAS is Wayland only. Weak virtual graphics cards are handled by `mas-gfx`, not by an X11 fallback.
-- A performance kernel (Zen/XanMod). It uses the normal Arch kernel for now so that it boots reliably.
-- AppArmor.
-- NVIDIA drivers (open-source AMD and Intel graphics are included).
-- Secure Boot. Turn Secure Boot off in the firmware.
-- A ready-made Sandbox image: bring your own ISO.
-- The Shield dot is a simple overlay. It sees incoming connections only. It cannot detect a program on this computer that connects OUT to someone, because that is how normal apps (and some malware) work.
-- The Sandbox network is "internet only" in spirit, but the virtual machine can still reach network services that run on the host's loopback address. Use `MAS_SANDBOX_NET=none` for no network.
-
-## If the build fails
-
-Copy the last 30 lines of the output and send them. The most likely causes are a package that was renamed in Arch, or a small boot-configuration difference between archiso versions.
+- NVIDIA drivers, Secure Boot (turn it off), AppArmor, a performance kernel.
+- A time zone picker (the installer guesses it from the internet, else UTC).
+- A screen lock (the Lock Screen action is not available).
+- The Shield dot only sees incoming connections.

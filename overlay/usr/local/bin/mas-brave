@@ -3,8 +3,8 @@
 APP=com.brave.Browser
 
 if ! flatpak info "$APP" >/dev/null 2>&1; then
-  if [[ -z "${MAS_IN_TERM:-}" ]] && command -v konsole >/dev/null 2>&1; then
-    exec env MAS_IN_TERM=1 konsole -e "$0" "$@"
+  if [[ -z "${MAS_IN_TERM:-}" ]] && command -v xfce4-terminal >/dev/null 2>&1; then
+    exec env MAS_IN_TERM=1 xfce4-terminal --title "Brave setup" -x "$0" "$@"
   fi
   echo "Installing Brave (first time only, needs internet)..."
   flatpak remote-add --user --if-not-exists flathub https://dl.flathub.org/repo/flathub.flatpakrepo

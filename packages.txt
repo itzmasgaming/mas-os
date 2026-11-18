@@ -2,32 +2,40 @@
 # One per line. The build stops if a package listed here does not exist.
 # Packages that may not exist go in optional.txt instead.
 
-# Desktop (minimal KDE Plasma, no extra apps)
-plasma-desktop
-plasma-nm
-plasma-pa
-kscreen
-systemsettings
-breeze
-breeze-gtk
-sddm
-xdg-desktop-portal-kde
-polkit-kde-agent
-kio-extras
-xorg-xwayland
+# Desktop: XFCE on X11 (works on real PCs and in virtual machines)
 xorg-server
-dolphin
-konsole
-ark
-kdialog
+xorg-xrandr
+xorg-xsetroot
+xf86-input-libinput
+xfce4-session
+xfce4-panel
+xfwm4
+xfdesktop
+xfce4-settings
+xfconf
+thunar
+thunar-volman
+gvfs
+xfce4-terminal
+xfce4-notifyd
+xfce4-pulseaudio-plugin
+xfce4-power-manager
+xarchiver
+sddm
 networkmanager
+network-manager-applet
 wpa_supplicant
+polkit-gnome
+zenity
+gnome-themes-extra
+adwaita-icon-theme
 
 # Audio
 pipewire
 pipewire-pulse
 pipewire-alsa
 wireplumber
+pavucontrol
 
 # Graphics (open-source drivers; the 32-bit parts are needed by Wine and games)
 mesa
@@ -39,14 +47,20 @@ lib32-vulkan-icd-loader
 lib32-vulkan-radeon
 lib32-vulkan-intel
 
-# Fonts
+# Fonts (ttf-dejavu: monospace for the recovery key)
 noto-fonts
+ttf-dejavu
 
-# Windows apps (.exe, .msi)
+# Windows apps (.exe, .msi): Wine with everything it commonly needs
 wine
 wine-mono
 wine-gecko
 winetricks
+cabextract
+lib32-gnutls
+lib32-libpulse
+lib32-alsa-plugins
+lib32-openal
 
 # Archives (.zip, .rar)
 unzip
@@ -59,10 +73,12 @@ podman
 qemu-desktop
 flatpak
 
-# Shield (firewall and the connection dot)
+# Shield (firewall and the connection dot) and the first-time setup screen
 nftables
 libnotify
 python-gobject
+python-cairo
+gtk3
 gtk4
 
 # Restore points (Btrfs)
@@ -72,7 +88,21 @@ snapper
 # Recovery key QR code
 qrencode
 
-# Administrator rights (mas-install, mas-accounts, mas-welcome and the sudoers files need it)
+# Installer (runs by itself behind the first-time setup)
+rsync
+gptfdisk
+parted
+dosfstools
+e2fsprogs
+arch-install-scripts
+grub
+efibootmgr
+mkinitcpio
+linux
+linux-firmware
+kexec-tools
+
+# Administrator rights (the sudoers files need it)
 sudo
 # Small utilities
 xdg-utils

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Install MAS
+Comment=Run the first-time setup again (installs MAS on a disk)
+Exec=/usr/local/bin/mas-setup --force
+Icon=/usr/share/mas/mas-icon.png
+Terminal=false
+Categories=System;

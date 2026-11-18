@@ -107,7 +107,69 @@ class Watcher:
         return conns
 
 
+def run_with_dot_x11():
+    """XFCE / X11: a small round amber dot at the top right corner (GTK 3, no compositor needed)."""
+    import gi
+    gi.require_version("Gtk", "3.0")
+    gi.require_version("Gdk", "3.0")
+    import cairo
+    from gi.repository import Gdk, GLib, Gtk
+
+    size = 18
+    watcher = Watcher()
+    win = Gtk.Window(type=Gtk.WindowType.POPUP)  # a popup has no frame and the window manager leaves it alone
+    win.set_default_size(size, size)
+    win.set_accept_focus(False)
+    area = Gtk.DrawingArea()
+    area.set_size_request(size, size)
+
+    def draw(_w, cr):
+        cr.set_source_rgb(1.0, 0.69, 0.125)
+        cr.arc(size / 2, size / 2, size / 2 - 1, 0, 6.2832)
+        cr.fill()
+        return False
+
+    area.connect("draw", draw)
+    win.add(area)
+
+    def round_shape(_w):  # cut the window to a circle (works without a compositor)
+        surf = cairo.ImageSurface(cairo.FORMAT_A8, size, size)
+        ctx = cairo.Context(surf)
+        ctx.arc(size / 2, size / 2, size / 2, 0, 6.2832)
+        ctx.fill()
+        win.shape_combine_region(Gdk.cairo_region_create_from_surface(surf))
+
+    win.connect("realize", round_shape)
+
+    def place():
+        screen = Gdk.Screen.get_default()
+        win.move(screen.get_width() - size - 14, 5)
+
+    def tick():
+        conns = watcher.poll() if "--demo" not in sys.argv else ["demo"]
+        if conns:
+            win.set_tooltip_text(describe(conns) if "--demo" not in sys.argv else "Demo: something connected")
+            place()
+            win.show_all()
+            gdkwin = win.get_window()
+            if gdkwin:
+                gdkwin.raise_()   # stay above the panel
+        else:
+            win.hide()
+        return True
+
+    GLib.timeout_add_seconds(POLL_SECONDS, tick)
+    tick()
+    Gtk.main()
+
+
 def run_with_dot():
+    if os.environ.get("WAYLAND_DISPLAY"):
+        return run_with_dot_wayland()
+    return run_with_dot_x11()
+
+
+def run_with_dot_wayland():
     import gi
     gi.require_version("Gtk", "4.0")
     gi.require_version("Gtk4LayerShell", "1.0")
@@ -178,7 +240,7 @@ def main():
         conns = inbound_connections()
         print(describe(conns) if conns else "No inbound connections.")
         return
-    if "--notify-only" in sys.argv:  # used on the X11 (XFCE) desktop, where the corner dot is not available
+    if "--notify-only" in sys.argv:  # notifications without the corner dot
         run_notifications_only()
         return
     try:
