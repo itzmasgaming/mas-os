@@ -1,0 +1,460 @@
+#!/usr/bin/python3
+"""mas-desktop-menu - the Windows-style right-click menus for the desktop background and the taskbar.
+
+Runs in the background after login. When you right-click an empty part of the desktop it shows:
+View (icon size, show icons) / Sort by / Refresh / Paste / New / Open in Terminal / Display settings / Personalize.
+(Right-clicking an icon still shows the normal icon menu.)
+Right-click on an empty part of the taskbar: Taskbar size (Small / Medium / Large / Custom, never bigger than a quarter of the screen).
+"""
+import fcntl, os, shutil, subprocess, sys, threading, time
+
+import gi
+gi.require_version('Gtk', '3.0'); gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib, Gio
+try:
+    gi.require_version('Atspi', '2.0')
+    from gi.repository import Atspi
+    Atspi.init()
+except Exception:
+    Atspi = None
+from Xlib import X, XK, display, Xatom
+from Xlib.ext import record, xtest
+from Xlib.protocol import rq
+
+SIZES = (('Large icons', 80), ('Medium icons', 56), ('Small icons', 40))
+SORTS = ('Name', 'Size', 'Item type', 'Date modified')
+
+
+def dbg(*a):
+    if os.environ.get('MAS_DEBUG'): print(*a, file=sys.stderr, flush=True)
+
+
+def xq(*args):
+    try:
+        return subprocess.run(('xfconf-query', '-c', 'xfce4-desktop') + args, capture_output=True, text=True, timeout=10).stdout.strip()
+    except Exception:
+        return ''
+
+
+def xset(prop, typ, val):
+    xq('-p', prop, '-n', '-t', typ, '-s', str(val))
+
+
+def desktop_dir():
+    return GLib.get_user_special_dir(GLib.UserDirectory.DIRECTORY_DESKTOP) or os.path.expanduser('~/Desktop')
+
+
+def launch(cmd):
+    try:
+        subprocess.Popen(cmd, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+def unique(path):
+    if not os.path.lexists(path): return path
+    base, ext = os.path.splitext(path); n = 2
+    while os.path.lexists(f'{base} ({n}){ext}'): n += 1
+    return f'{base} ({n}){ext}'
+
+
+# ------------------------------------------------------------------ actions
+def restart_desktop():
+    launch(['xfdesktop', '--quit']); time.sleep(1.2)
+    return
+
+
+def sort_icons(how):
+    """Writes the icon positions (xfdesktop remembers them in ~/.config/xfce4/desktop/icons.screen*.rc) in the chosen order."""
+    d = desktop_dir()
+    try: names = [n for n in os.listdir(d) if not n.startswith('.')]
+    except Exception: return
+    def key(n):
+        p = os.path.join(d, n); st = os.stat(p); isdir = os.path.isdir(p)
+        if how == 'Name': return (not isdir, n.casefold())
+        if how == 'Size': return (st.st_size, n.casefold())
+        if how == 'Item type': return (not isdir, os.path.splitext(n)[1].casefold(), n.casefold())
+        return (-st.st_mtime, n.casefold())
+    names.sort(key=key)
+    try: size = int(xq('-p', '/desktop-icons/icon-size') or 56)
+    except ValueError: size = 56
+    mon = Gdk.Display.get_default().get_primary_monitor() or Gdk.Display.get_default().get_monitor(0)
+    wa = mon.get_workarea()
+    rows = max(1, (wa.height - 40) // (size + 58))
+    subprocess.run(['xfdesktop', '--quit'], capture_output=True, timeout=15); time.sleep(1.0)
+    cfg = os.path.expanduser('~/.config/xfce4/desktop')
+    os.makedirs(cfg, exist_ok=True)
+    body = '[xfdesktop-version-4.10.3+-rcfile_format]\n4.10.3+=true\n\n'
+    for i, n in enumerate(names):
+        body += f'[{os.path.join(d, n)}]\nrow={i % rows}\ncol={i // rows}\n\n'
+    files = [f for f in os.listdir(cfg) if f.startswith('icons.screen') and f.endswith('.rc')] or ['icons.screen.latest.rc']
+    for f in files:
+        open(os.path.join(cfg, f), 'w').write(body)
+    launch(['xfdesktop'])
+
+
+def new_folder():
+    p = unique(os.path.join(desktop_dir(), 'New folder'))
+    try: os.makedirs(p)
+    except Exception: pass
+
+
+def new_text():
+    p = unique(os.path.join(desktop_dir(), 'New Text Document.txt'))
+    try: open(p, 'a').close()
+    except Exception: pass
+
+
+def copy_any(src, dst):
+    if os.path.isdir(src) and not os.path.islink(src): shutil.copytree(src, dst, symlinks=True)
+    else: shutil.copy2(src, dst, follow_symlinks=False)
+
+
+def paste():
+    cb = Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD)
+    atom = Gdk.Atom.intern('x-special/gnome-copied-files', False)
+    def got(_cb, sel, _d):
+        data = sel.get_data()
+        if not data: return
+        lines = data.decode('utf-8', 'replace').splitlines()
+        cut = bool(lines) and lines[0].strip() == 'cut'
+        for uri in lines[1:]:
+            f = Gio.File.new_for_uri(uri.strip()); src = f.get_path()
+            if not src or not os.path.exists(src): continue
+            dst = unique(os.path.join(desktop_dir(), os.path.basename(src)))
+            try:
+                if cut: shutil.move(src, dst)
+                else: copy_any(src, dst)
+            except Exception: pass
+    cb.request_contents(atom, got, None)
+
+
+def can_paste():
+    return Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).wait_is_target_available(Gdk.Atom.intern('x-special/gnome-copied-files', False))
+
+
+# ------------------------------------------------------------------ taskbar size
+PANEL_SIZES = (('Small', 40), ('Medium', 52), ('Large', 72))
+PANEL_MIN = 32
+
+
+def screen_h():
+    d = Gdk.Display.get_default(); m = d.get_primary_monitor() or d.get_monitor(0)
+    return m.get_geometry().height
+
+
+def panel_max():
+    return max(PANEL_MIN, screen_h() // 4)            # never more than a quarter of the screen
+
+
+def panel_size():
+    try:
+        return int(subprocess.run(['xfconf-query', '-c', 'xfce4-panel', '-p', '/panels/panel-1/size'], capture_output=True, text=True, timeout=10).stdout.strip())
+    except Exception:
+        return 52
+
+
+def set_panel_size(px):
+    px = max(PANEL_MIN, min(int(px), panel_max()))
+    for prop, val in (('size', px), ('icon-size', max(16, int(px * 0.5)))):
+        subprocess.run(['xfconf-query', '-c', 'xfce4-panel', '-p', f'/panels/panel-1/{prop}', '-n', '-t', 'uint', '-s', str(val)], capture_output=True, timeout=10)
+
+
+def custom_size_dialog():
+    mx = panel_max()
+    dlg = Gtk.Dialog(title='Taskbar size', flags=Gtk.DialogFlags.MODAL)
+    dlg.add_buttons('Cancel', Gtk.ResponseType.CANCEL, 'Apply', Gtk.ResponseType.OK)
+    box = dlg.get_content_area(); box.set_spacing(10); box.set_margin_start(18); box.set_margin_end(18); box.set_margin_top(14); box.set_margin_bottom(8)
+    box.add(Gtk.Label(label='Height of the taskbar in pixels', xalign=0))
+    sc = Gtk.Scale.new_with_range(Gtk.Orientation.HORIZONTAL, PANEL_MIN, mx, 1)
+    sc.set_value(min(panel_size(), mx)); sc.set_size_request(320, -1); sc.set_value_pos(Gtk.PositionType.RIGHT)
+    box.add(sc)
+    note = Gtk.Label(label='The biggest allowed is a quarter of the screen (%d px).' % mx, xalign=0); note.get_style_context().add_class('mas-sub')
+    box.add(note)
+    dlg.show_all()
+    if dlg.run() == Gtk.ResponseType.OK:
+        set_panel_size(sc.get_value())
+    dlg.destroy()
+
+
+def build_panel_menu():
+    m = Gtk.Menu(); cur = panel_size(); mx = panel_max()
+    sub = Gtk.Menu(); grp = []
+    preset_vals = []
+    for name, px in PANEL_SIZES:
+        px = min(px, mx); preset_vals.append(px)
+        sub.append(item(f'{name}', lambda px=px: set_panel_size(px), check=(cur == px), radio_group=grp))
+    sub.append(item('Custom...', custom_size_dialog, check=(cur not in preset_vals), radio_group=grp))
+    t = Gtk.MenuItem.new_with_label('Taskbar size'); t.set_submenu(sub); m.append(t)
+    m.append(Gtk.SeparatorMenuItem())
+    m.append(item('Task Manager', lambda: launch(['mas-taskmgr'])))
+    m.append(item('Taskbar settings...', lambda: launch(['xfce4-panel', '--preferences'])))
+    m.show_all()
+    return m
+
+
+def net_send(xd, win, atom_name, data, mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask):
+    from Xlib.protocol import event
+    root = xd.screen().root
+    ev = event.ClientMessage(window=win, client_type=xd.intern_atom(atom_name), data=(32, (data + [0] * 5)[:5]))
+    root.send_event(ev, event_mask=mask); xd.flush()
+
+
+def build_window_menu(xd, win):
+    """Windows-style menu for one taskbar app button: Restore / Minimize / Maximize / Close window."""
+    m = Gtk.Menu()
+    a_state = xd.intern_atom('_NET_WM_STATE'); a_max_v = xd.intern_atom('_NET_WM_STATE_MAXIMIZED_VERT'); a_max_h = xd.intern_atom('_NET_WM_STATE_MAXIMIZED_HORZ')
+    try:
+        st = win.get_full_property(a_state, Xatom.ATOM); maxed = bool(st and a_max_v in st.value)
+    except Exception:
+        maxed = False
+    def toggle_max(): net_send(xd, win, '_NET_WM_STATE', [2, a_max_h, a_max_v, 1])
+    def minimize(): net_send(xd, win, 'WM_CHANGE_STATE', [3])
+    def activate(): net_send(xd, win, '_NET_ACTIVE_WINDOW', [2, 0, 0])
+    def close():
+        net_send(xd, win, '_NET_CLOSE_WINDOW', [0, 2])
+    m.append(item('Restore' if maxed else 'Open', (toggle_max if maxed else activate)))
+    m.append(item('Minimize', minimize))
+    if not maxed: m.append(item('Maximize', toggle_max))
+    m.append(Gtk.SeparatorMenuItem())
+    m.append(item('✕  Close window', close))
+    m.show_all()
+    return m
+
+
+# ------------------------------------------------------------------ menu
+def item(label, cb=None, sensitive=True, check=None, radio_group=None):
+    if radio_group is not None:
+        it = Gtk.RadioMenuItem.new_with_label_from_widget(radio_group[0] if radio_group else None, label)
+        it.set_active(bool(check)); it.set_draw_as_radio(True)
+        if not radio_group: radio_group.append(it)
+        if cb: it.connect('activate', lambda w: w.get_active() and cb())
+    elif check is not None:
+        it = Gtk.CheckMenuItem.new_with_label(label); it.set_active(check)
+        if cb: it.connect('toggled', lambda w: cb(w.get_active()))
+    else:
+        it = Gtk.MenuItem.new_with_label(label)
+        if cb: it.connect('activate', lambda _w: cb())
+    it.set_sensitive(sensitive)
+    return it
+
+
+def build_menu():
+    m = Gtk.Menu()
+    try: cur = int(xq('-p', '/desktop-icons/icon-size') or 56)
+    except ValueError: cur = 56
+    shown = xq('-p', '/desktop-icons/style') != '0'
+    view = Gtk.Menu(); grp = []
+    for name, px in SIZES:
+        view.append(item(name, lambda px=px: xset('/desktop-icons/icon-size', 'uint', px), check=(cur == px), radio_group=grp))
+    view.append(Gtk.SeparatorMenuItem())
+    view.append(item('Show desktop icons', lambda on: xset('/desktop-icons/style', 'int', 2 if on else 0), check=shown))
+    v = Gtk.MenuItem.new_with_label('View'); v.set_submenu(view); m.append(v)
+    srt = Gtk.Menu()
+    for s in SORTS:
+        srt.append(item(s, lambda s=s: threading.Thread(target=sort_icons, args=(s,), daemon=True).start()))
+    s = Gtk.MenuItem.new_with_label('Sort by'); s.set_submenu(srt); m.append(s)
+    m.append(item('Refresh', lambda: launch(['xfdesktop', '--reload'])))
+    m.append(Gtk.SeparatorMenuItem())
+    m.append(item('Paste', paste, sensitive=can_paste()))
+    m.append(Gtk.SeparatorMenuItem())
+    new = Gtk.Menu(); new.append(item('Folder', new_folder)); new.append(item('Text Document', new_text))
+    n = Gtk.MenuItem.new_with_label('New'); n.set_submenu(new); m.append(n)
+    m.append(item('Open in Terminal', lambda: launch(['xfce4-terminal', '--working-directory', desktop_dir()])))
+    m.append(Gtk.SeparatorMenuItem())
+    m.append(item('Display settings', lambda: launch(['xfce4-display-settings'])))
+    m.append(item('Personalize', lambda: launch(['/usr/local/bin/mas-settings', 'personalize'])))
+    m.show_all()
+    return m
+
+
+class Daemon:
+    def __init__(self):
+        self.xd = display.Display()
+        self.root = self.xd.screen().root
+        self.a_type = self.xd.intern_atom('_NET_WM_WINDOW_TYPE')
+        self.a_desktop = self.xd.intern_atom('_NET_WM_WINDOW_TYPE_DESKTOP')
+        self.a_dock = self.xd.intern_atom('_NET_WM_WINDOW_TYPE_DOCK')
+        self.kind = None
+        self.menu = None
+        self.px = self.py = 0
+
+    def target(self):
+        """'desktop', 'panel' or None for the window under the pointer."""
+        try:
+            child = self.root.query_pointer().child
+            if not child: return None
+            for w in [child] + list(child.query_tree().children):
+                q = w.get_full_property(self.a_type, Xatom.ATOM)
+                if q and self.a_desktop in q.value: return 'desktop'
+                if q and self.a_dock in q.value: return 'panel'
+            return None
+        except Exception:
+            return None
+
+    def over_desktop(self):
+        try:
+            child = self.root.query_pointer().child
+            if not child: return False
+            p = child.get_full_property(self.a_type, Xatom.ATOM)
+            dbg('child', child.id, 'type', p.value if p else None, 'want', self.a_desktop, 'name', child.get_wm_name(), 'class', child.get_wm_class())
+            if p and self.a_desktop in p.value: return True
+            # the desktop window may be a child below a frame/override window: look one level down too
+            for w in child.query_tree().children:
+                q = w.get_full_property(self.a_type, Xatom.ATOM)
+                if q and self.a_desktop in q.value: return True
+            return False
+        except Exception:
+            return False
+
+    def popup_showing(self):
+        """True when some program opened a popup (override-redirect window) right after the click."""
+        try:
+            for w in self.root.query_tree().children:
+                at = w.get_attributes()
+                if at.override_redirect and at.map_state == X.IsViewable:
+                    return True
+        except Exception:
+            pass
+        return False
+
+    def menu_items(self, appname):
+        """Names of the menu entries a program (xfdesktop, xfce4-panel) is showing right now (through the accessibility bus)."""
+        names = []
+        if Atspi is None: return names
+        try:
+            desk = Atspi.get_desktop(0)
+            for i in range(desk.get_child_count()):
+                app = desk.get_child_at_index(i)
+                if app is None or (app.get_name() or '') != appname: continue
+                stack = [(app, 0)]
+                while stack:
+                    node, depth = stack.pop()
+                    for j in range(node.get_child_count()):
+                        c = node.get_child_at_index(j)
+                        if c is None: continue
+                        if 'menu item' in c.get_role_name(): names.append(c.get_name() or '')
+                        if depth < 6: stack.append((c, depth + 1))
+        except Exception:
+            pass
+        return names
+
+    def button_title_at(self, x, y):
+        """Title of the taskbar button under (x, y), read from the panel's accessibility tree."""
+        if Atspi is None: return None
+        try:
+            desk = Atspi.get_desktop(0)
+            for i in range(desk.get_child_count()):
+                app = desk.get_child_at_index(i)
+                if app is None or (app.get_name() or '') != 'xfce4-panel': continue
+                stack = [(app, 0)]
+                while stack:
+                    node, depth = stack.pop()
+                    for j in range(node.get_child_count()):
+                        c = node.get_child_at_index(j)
+                        if c is None: continue
+                        if 'button' in c.get_role_name() and c.get_name():
+                            try:
+                                r = c.get_extents(Atspi.CoordType.SCREEN)
+                                if r.x <= x <= r.x + r.width and r.y <= y <= r.y + r.height: return c.get_name()
+                            except Exception:
+                                pass
+                        if depth < 8: stack.append((c, depth + 1))
+        except Exception:
+            pass
+        return None
+
+    def window_by_title(self, title):
+        a_list = self.xd.intern_atom('_NET_CLIENT_LIST'); a_name = self.xd.intern_atom('_NET_WM_NAME')
+        p = self.root.get_full_property(a_list, Xatom.WINDOW)
+        best = None
+        for wid in (p.value if p else []):
+            w = self.xd.create_resource_object('window', wid)
+            nm = w.get_full_property(a_name, 0)
+            t = nm.value.decode('utf-8', 'replace') if nm and isinstance(nm.value, bytes) else (w.get_wm_name() or '')
+            if t == title: return w
+            if t and title and (t.startswith(title) or title.startswith(t)) and best is None: best = w
+        return best
+
+    def press_escape(self):
+        try:
+            code = self.xd.keysym_to_keycode(XK.XK_Escape)
+            xtest.fake_input(self.xd, X.KeyPress, code); xtest.fake_input(self.xd, X.KeyRelease, code); self.xd.sync()
+        except Exception:
+            pass
+
+    def on_click(self, x, y):
+        self.kind = self.target()
+        dbg('click', x, y, self.kind)
+        if not self.kind: return False
+        self.px, self.py = x, y
+        GLib.timeout_add(150, self.maybe_show)
+        return False
+
+    def maybe_show(self):
+        app, marks = (('xfdesktop', ('Create Launcher...', 'Desktop Settings...', 'Arrange Desktop Icons'))
+                      if self.kind == 'desktop' else ('xfce4-panel', ('Separator',)))
+        if self.kind == 'panel':
+            # a right-click on a running program's taskbar button: Windows-style window menu instead of the stock one
+            title = self.button_title_at(self.px, self.py)
+            win = self.window_by_title(title) if title else None
+            dbg('panel button', title, win)
+            if win is not None:
+                self.win = win
+                if self.popup_showing(): self.press_escape(); GLib.timeout_add(120, self.show_ours)
+                else: self.show_ours()
+                return False
+        if self.popup_showing():
+            names = self.menu_items(app)
+            dbg('popup showing;', app, 'items:', names[:6])
+            if not any(n in names for n in marks):
+                return False                      # the menu of an icon / a taskbar button: leave it alone
+            self.press_escape()                   # close the plain menu, ours replaces it
+            GLib.timeout_add(120, self.show_ours)
+            return False
+        self.show_ours()
+        return False
+
+    def show_ours(self):
+        try:
+            if self.kind == 'panel' and getattr(self, 'win', None) is not None:
+                self.menu = build_window_menu(self.xd, self.win); self.win = None
+            else:
+                self.menu = build_panel_menu() if self.kind == 'panel' else build_menu()
+            rect = Gdk.Rectangle(); rect.x, rect.y, rect.width, rect.height = int(self.px), int(self.py), 1, 1
+            self.menu.popup_at_rect(Gdk.get_default_root_window(), rect, Gdk.Gravity.NORTH_WEST, Gdk.Gravity.NORTH_WEST, None)
+        except Exception as e:
+            print('menu failed:', e, file=sys.stderr)
+        return False
+
+
+def record_thread(daemon):
+    d = display.Display()
+    ctx = d.record_create_context(0, [record.AllClients], [{
+        'core_requests': (0, 0), 'core_replies': (0, 0), 'ext_requests': (0, 0, 0, 0), 'ext_replies': (0, 0, 0, 0),
+        'delivered_events': (0, 0), 'device_events': (X.ButtonPress, X.ButtonPress), 'errors': (0, 0),
+        'client_started': False, 'client_died': False}])
+
+    def handler(reply):
+        if reply.category != record.FromServer or reply.client_swapped or not reply.data or reply.data[0] < 2: return
+        data = reply.data
+        while len(data):
+            ev, data = rq.EventField(None).parse_binary_value(data, d.display, None, None)
+            if ev.type == X.ButtonPress and ev.detail == 3:
+                GLib.idle_add(daemon.on_click, ev.root_x, ev.root_y)
+    d.record_enable_context(ctx, handler)
+
+
+def main():
+    lock = open(os.path.join(os.environ.get('XDG_RUNTIME_DIR') or '/tmp', 'mas-desktop-menu.lock'), 'w')
+    try: fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError: return 0
+    # xfdesktop's own background menu is switched off; this one replaces it
+    xset('/desktop-menu/show', 'bool', 'false')
+    dm = Daemon()
+    threading.Thread(target=record_thread, args=(dm,), daemon=True).start()
+    Gtk.main()
+
+
+if __name__ == '__main__':
+    sys.exit(main())

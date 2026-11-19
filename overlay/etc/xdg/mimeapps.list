@@ -1,7 +1,28 @@
 [Default Applications]
-application/x-ms-dos-executable=wine.desktop
-application/vnd.microsoft.portable-executable=wine.desktop
-application/x-msi=wine.desktop
+# Windows programs open by double-click, like on Windows (mas-wine-open runs them with Wine)
+application/x-ms-dos-executable=mas-wine-open.desktop
+application/vnd.microsoft.portable-executable=mas-wine-open.desktop
+application/x-msdownload=mas-wine-open.desktop
+application/x-dosexec=mas-wine-open.desktop
+application/x-msi=mas-wine-open.desktop
+application/x-msdos-program=mas-wine-open.desktop
+application/x-bat=mas-wine-open.desktop
+application/x-ms-shortcut=mas-wine-open.desktop
+font/ttf=mas-fonts.desktop
+font/otf=mas-fonts.desktop
+font/collection=mas-fonts.desktop
+font/sfnt=mas-fonts.desktop
+application/x-font-ttf=mas-fonts.desktop
+application/x-font-otf=mas-fonts.desktop
+application/vnd.ms-opentype=mas-fonts.desktop
 x-scheme-handler/http=com.brave.Browser.desktop
 x-scheme-handler/https=com.brave.Browser.desktop
 text/html=com.brave.Browser.desktop
+
+[Added Associations]
+application/x-ms-dos-executable=mas-wine-open.desktop;
+application/vnd.microsoft.portable-executable=mas-wine-open.desktop;
+application/x-msdownload=mas-wine-open.desktop;
+application/x-msi=mas-wine-open.desktop;
+application/x-bat=mas-wine-open.desktop;
+application/x-ms-shortcut=mas-wine-open.desktop;

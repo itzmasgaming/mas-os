@@ -1,0 +1,6 @@
+[Desktop Entry]
+Type=Application
+Name=MAS desktop menu
+Exec=/usr/local/bin/mas-desktop-menu
+NoDisplay=true
+OnlyShowIn=XFCE;

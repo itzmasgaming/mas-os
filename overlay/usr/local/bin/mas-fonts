@@ -1,0 +1,95 @@
+#!/usr/bin/env python3
+"""mas-fonts - add your own fonts (.ttf .otf .ttc .otc) for your account.
+
+  mas-fonts install FILE...    copy font files into ~/.local/share/fonts/MAS and refresh the font list
+  mas-fonts open FILE...       ask first ("Install this font?"), then install (used when you double-click a font)
+  mas-fonts list               print the fonts you added (JSON)
+  mas-fonts remove FILE        remove one of them
+"""
+import json, os, shutil, subprocess, sys
+
+DIR = os.environ.get('MAS_FONT_DIR', os.path.expanduser('~/.local/share/fonts/MAS'))
+EXT = ('.ttf', '.otf', '.ttc', '.otc')
+MAX = 60 << 20
+
+
+def families(path):
+    try:
+        out = subprocess.run(['fc-scan', '--format', '%{family[0]}\n', path], capture_output=True, text=True, timeout=20).stdout
+        names = sorted({l.strip() for l in out.splitlines() if l.strip()})
+        return names
+    except Exception:
+        return []
+
+
+def refresh():
+    subprocess.run(['fc-cache', '-f', DIR], capture_output=True, timeout=120)
+
+
+def install(files):
+    ok, bad = [], []
+    os.makedirs(DIR, exist_ok=True)
+    for f in files:
+        name = os.path.basename(f)
+        try:
+            if not name.lower().endswith(EXT): raise ValueError('not a font file (use .ttf .otf .ttc .otc)')
+            if os.path.getsize(f) > MAX: raise ValueError('file too big')
+            if not families(f): raise ValueError('not a valid font')
+            dst = os.path.join(DIR, name); n = 2
+            while os.path.exists(dst) and not os.path.samefile(f, dst) if os.path.exists(dst) else False:
+                b, e = os.path.splitext(name); dst = os.path.join(DIR, f'{b} ({n}){e}'); n += 1
+            if not (os.path.exists(dst) and os.path.samefile(f, dst)):
+                shutil.copyfile(f, dst); os.chmod(dst, 0o644)
+            ok.append((name, families(dst)))
+        except Exception as e:
+            bad.append((name, str(e)))
+    if ok: refresh()
+    return ok, bad
+
+
+def listing():
+    out = []
+    if os.path.isdir(DIR):
+        for n in sorted(os.listdir(DIR)):
+            if n.lower().endswith(EXT):
+                out.append({'file': n, 'path': os.path.join(DIR, n), 'families': families(os.path.join(DIR, n))})
+    return out
+
+
+def remove(path):
+    path = os.path.realpath(path)
+    if os.path.dirname(path) != os.path.realpath(DIR) or not os.path.isfile(path):
+        print('not one of your added fonts', file=sys.stderr); return 1
+    os.remove(path); refresh(); return 0
+
+
+def zen(kind, text):
+    subprocess.run(['zenity', f'--{kind}', '--no-wrap', '--title', 'Fonts', '--text', text], capture_output=True)
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else ''
+    files = argv[2:]
+    if cmd == 'list':
+        print(json.dumps(listing())); return 0
+    if cmd == 'remove' and files:
+        return remove(files[0])
+    if cmd in ('install', 'open') and files:
+        if cmd == 'open':
+            fam = ', '.join(sum([families(f) for f in files], [])[:3]) or os.path.basename(files[0])
+            if subprocess.run(['zenity', '--question', '--no-wrap', '--title', 'Fonts', '--ok-label', 'Install', '--cancel-label', 'Cancel',
+                               '--text', f'Install the font\n<b>{fam}</b> ?']).returncode != 0:
+                return 0
+        ok, bad = install(files)
+        if cmd == 'open':
+            if ok: zen('info', 'Font installed:\n' + '\n'.join(', '.join(f) or n for n, f in ok))
+            if bad: zen('error', 'Could not install:\n' + '\n'.join(f'{n}: {e}' for n, e in bad))
+        else:
+            for n, f in ok: print('installed', n, ', '.join(f))
+            for n, e in bad: print('failed', n, e, file=sys.stderr)
+        return 0 if ok else 1
+    print(__doc__); return 2
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv))

@@ -196,9 +196,12 @@ def cmd_install():
     work = tempfile.mkdtemp(prefix='mas-upd.', dir=STATE_DIR)
     try:
         did = False
-        if m.get('system_upgrade') and not R:
-            log('updating system packages (pacman -Syu)')
-            r = subprocess.run(['pacman', '-Syu', '--noconfirm', '--needed'], capture_output=True, text=True)
+        pk = m.get('packages') or []
+        if pk and (not isinstance(pk, list) or not all(isinstance(x, str) and re.fullmatch(r'[a-z0-9][a-z0-9@._+-]{0,63}', x) for x in pk)):
+            raise ValueError('the update list has a bad package name')
+        if (m.get('system_upgrade') or pk) and not R:
+            log('updating system packages (pacman -Syu' + (' + ' + ' '.join(pk) if pk else '') + ')')
+            r = subprocess.run(['pacman', '-Syu', '--noconfirm', '--needed'] + pk, capture_output=True, text=True)
             log(r.stdout[-1500:] + r.stderr[-800:])
             if r.returncode != 0: raise RuntimeError('system package update failed')
             did = True

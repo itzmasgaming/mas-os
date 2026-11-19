@@ -2,7 +2,7 @@
 Name=MAS-Light
 Comment=MAS icons (light)
 Inherits=Adwaita,hicolor
-Directories=scalable/apps,128x128/apps
+Directories=scalable/apps,scalable/mimetypes,128x128/apps
 
 [scalable/apps]
 Size=64
@@ -15,3 +15,10 @@ Context=Applications
 Size=128
 Type=Fixed
 Context=Applications
+
+[scalable/mimetypes]
+Size=64
+MinSize=8
+MaxSize=512
+Type=Scalable
+Context=MimeTypes

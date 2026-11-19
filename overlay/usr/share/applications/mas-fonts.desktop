@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Install font
+Comment=Add a font for your account
+Exec=/usr/local/bin/mas-fonts open %F
+Icon=mas-fonts
+Terminal=false
+NoDisplay=true
+MimeType=font/ttf;font/otf;font/collection;font/sfnt;application/x-font-ttf;application/x-font-otf;application/vnd.ms-opentype;application/x-font-opentype;

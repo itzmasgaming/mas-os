@@ -89,3 +89,19 @@ New VM: Linux / Arch Linux (64-bit), 4 GB RAM or more, 2 CPUs, **40 GB disk**, *
 
 **Tested here:** the look (real xfwm4, xfce4-panel and xfdesktop in a virtual screen, both modes), Start menu, Settings, wallpaper switching, the whole updater (find, download, verify, install, refuse bad files).
 **Not tested here:** the full ISO build and boot, Wine/bubblewrap, Restore points (need a real installed MAS).
+
+## v0.3.1
+- Desktop launchers are marked as trusted at every login, so no more "Untrusted application launcher" warning.
+- Right-click on the desktop background now shows a Windows-style menu: View (icon size, show icons), Sort by (Name, Size, Item type, Date modified), Refresh, Paste, New (Folder, Text Document), Open in Terminal, Display settings, Personalize. Right-clicking an icon still shows the normal icon menu.
+- Windows files (.exe .msi .bat .lnk) open by double-click, with an EXE / MSI / BAT icon, no extra "opener" step.
+- Updates can now also install new programs: `MAS_UPDATE_PACKAGES="python-xlib bubblewrap xorg-server-xephyr" ./make-update.sh 0.3.1 "notes"`.
+
+## v0.3.2
+- **Fonts**: Settings > Fonts. Add your own .ttf / .otf / .ttc / .otc files (they are kept in your account), remove them, and pick the system font. Double-clicking a font file asks "Install this font?".
+- **Taskbar size**: right-click an empty part of the taskbar > Taskbar size > Small / Medium / Large / Custom. It can never be taller than a quarter of the screen (also checked at every login).
+- **Ubuntu LTS window**: `apt`, `apt-get`, `dpkg` and `add-apt-repository` now work without typing `sudo` (that was the "Permission denied" error).
+
+## v0.3.3
+- **Task Manager** (`mas-taskmgr`, Ctrl+Shift+Esc, also in the taskbar right-click menu): Processes (Apps / Background, CPU, memory, PID, End task, Force end) and Performance (CPU, memory, disk, network graphs).
+- **Taskbar app buttons**: right-click a running program's button for Open/Restore, Minimize, Maximize and Close window. Every window now has its own button (no grouping).
+- Note: the new Ctrl+Shift+Esc shortcut is set at login; the no-grouping taskbar setting is in `/etc/skel`, so it applies to new accounts (existing accounts: Taskbar settings → Window buttons → Grouping: never).

@@ -8,7 +8,7 @@
   mas-appearance effects on|off   rounded corners and shadows (turn off on very slow computers)
   mas-appearance show             print the current choice
 """
-import json, os, subprocess, sys, time
+import json, os, re, subprocess, sys, time
 
 SHARE = os.environ.get('MAS_SHARE', '/usr/share/mas')
 CONF = os.path.join(os.environ.get('XDG_CONFIG_HOME', os.path.expanduser('~/.config')), 'mas', 'appearance.json')
@@ -81,6 +81,25 @@ def set_wallpaper(img):
     return n
 
 
+def clamp_panel():
+    """The taskbar may never be taller than a quarter of the screen."""
+    r = run('xrandr', '--query')
+    heights = []
+    if r and r.stdout:
+        for l in r.stdout.splitlines():
+            if ' connected' in l:
+                m = re.search(r'(\d+)x(\d+)\+\d+\+\d+', l)
+                if m: heights.append(int(m.group(2)))
+    if not heights: return
+    mx = max(32, min(heights) // 4)
+    q = run('xfconf-query', '-c', 'xfce4-panel', '-p', '/panels/panel-1/size')
+    try: cur = int(q.stdout.strip())
+    except Exception: return
+    if cur > mx:
+        xq('xfce4-panel', '/panels/panel-1/size', 'uint', mx)
+        xq('xfce4-panel', '/panels/panel-1/icon-size', 'uint', max(16, mx // 2))
+
+
 def apply(d, wait=False):
     name = 'MAS-' + d['mode'].capitalize()
     for _ in range(15 if wait else 1):
@@ -98,6 +117,7 @@ def apply(d, wait=False):
     xq('xfwm4', '/general/show_popup_shadow', 'bool', 'true')
     # apps that follow the system dark/light choice (GTK4 / libadwaita)
     run('gsettings', 'set', 'org.gnome.desktop.interface', 'color-scheme', 'prefer-dark' if d['mode'] == 'dark' else 'prefer-light')
+    clamp_panel()
     img = wallpaper_path(d)
     for _ in range(12 if wait else 1):
         if set_wallpaper(img) > 0:

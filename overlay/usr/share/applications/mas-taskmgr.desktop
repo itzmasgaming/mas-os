@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Task Manager
+Comment=See and end running programs, CPU / memory / disk / network
+Exec=/usr/local/bin/mas-taskmgr
+Icon=mas-taskmgr
+Terminal=false
+Categories=System;Monitor;
+Keywords=task;manager;process;kill;cpu;memory;

@@ -9,7 +9,8 @@ from gi.repository import Gtk, GLib, GdkPixbuf
 SHARE = os.environ.get('MAS_SHARE', '/usr/share/mas')
 APPEAR = os.environ.get('MAS_APPEARANCE', '/usr/local/bin/mas-appearance')
 UPDATE = os.environ.get('MAS_UPDATE', '/usr/local/bin/mas-update')
-PAGES = [('personalize', 'Personalize', 'mas-personalize'), ('update', 'Update', 'mas-update'), ('about', 'About', 'mas-settings')]
+FONTS = os.environ.get('MAS_FONTS', '/usr/local/bin/mas-fonts')
+PAGES = [('personalize', 'Personalize', 'mas-personalize'), ('fonts', 'Fonts', 'mas-fonts'), ('update', 'Update', 'mas-update'), ('about', 'About', 'mas-settings')]
 BACKS = [('mas', 'MAS'), ('mountains', 'Mountains'), ('midnight', 'Midnight'), ('aurora', 'Aurora')]
 
 
@@ -47,6 +48,7 @@ class Settings(Gtk.Window):
             h = Gtk.Box(spacing=10, margin=10); h.pack_start(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.LARGE_TOOLBAR), False, False, 0)
             h.pack_start(Gtk.Label(label=title, xalign=0), False, False, 0); row.add(h); side.add(row)
         self.stack.add_named(self.page_personalize(), 'personalize')
+        self.stack.add_named(self.page_fonts(), 'fonts')
         self.stack.add_named(self.page_update(), 'update')
         self.stack.add_named(self.page_about(), 'about')
         side.connect('row-selected', self.on_row)
@@ -135,6 +137,78 @@ class Settings(Gtk.Window):
 
     def on_fx(self, sw, _p):
         self.run_async(APPEAR, 'effects', 'on' if sw.get_active() else 'off')
+
+    # ------------------------------------------------------------ Fonts
+    def page_fonts(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12, margin=28)
+        box.pack_start(label('Fonts', 'mas-title'), False, False, 0)
+        box.pack_start(label('Add your own fonts (.ttf .otf .ttc .otc). They are saved in your account and every program can use them.', 'mas-sub', wrap=True), False, False, 0)
+        bar = Gtk.Box(spacing=10)
+        add = Gtk.Button(label='Add fonts...'); add.get_style_context().add_class('suggested-action'); add.connect('clicked', self.on_add_font)
+        self.f_remove = Gtk.Button(label='Remove selected'); self.f_remove.connect('clicked', self.on_remove_font); self.f_remove.set_sensitive(False)
+        bar.pack_start(add, False, False, 0); bar.pack_start(self.f_remove, False, False, 0)
+        box.pack_start(bar, False, False, 0)
+        self.f_list = Gtk.ListBox(); self.f_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
+        self.f_list.connect('row-selected', lambda _l, r: self.f_remove.set_sensitive(r is not None and hasattr(r, 'path')))
+        sc = Gtk.ScrolledWindow(); sc.set_min_content_height(200); sc.set_vexpand(True); sc.add(self.f_list)
+        box.pack_start(sc, True, True, 0)
+        box.pack_start(label('Interface font', 'mas-title'), False, False, 6)
+        row = Gtk.Box(spacing=10)
+        self.f_btn = Gtk.FontButton(); self.f_btn.set_use_font(True); self.f_btn.set_show_size(True)
+        rc, out = sh('xfconf-query', '-c', 'xsettings', '-p', '/Gtk/FontName')
+        if rc == 0 and out.strip(): self.f_btn.set_font(out.strip())
+        row.pack_start(self.f_btn, False, False, 0)
+        ap = Gtk.Button(label='Use as system font'); ap.connect('clicked', self.on_font_apply)
+        row.pack_start(ap, False, False, 0)
+        box.pack_start(row, False, False, 0)
+        self.f_msg = label('', 'mas-sub', wrap=True); box.pack_start(self.f_msg, False, False, 0)
+        self.reload_fonts()
+        return box
+
+    def reload_fonts(self):
+        for r in self.f_list.get_children(): self.f_list.remove(r)
+        rc, out = sh(FONTS, 'list')
+        try: items = json.loads(out)
+        except Exception: items = []
+        for it in items:
+            row = Gtk.ListBoxRow(); row.path = it['path']
+            h = Gtk.Box(spacing=12, margin=8)
+            h.pack_start(Gtk.Label(label=', '.join(it['families']) or it['file'], xalign=0), True, True, 0)
+            f = Gtk.Label(label=it['file'], xalign=1); f.get_style_context().add_class('mas-sub'); h.pack_start(f, False, False, 0)
+            row.add(h); self.f_list.add(row)
+        if not items:
+            row = Gtk.ListBoxRow(); row.set_activatable(False); row.set_selectable(False)
+            l = Gtk.Label(label='No fonts added yet.', margin=16); l.get_style_context().add_class('mas-sub'); row.add(l); self.f_list.add(row)
+        self.f_list.show_all()
+
+    def on_add_font(self, _b):
+        dlg = Gtk.FileChooserDialog(title='Choose font files', parent=self, action=Gtk.FileChooserAction.OPEN)
+        dlg.add_buttons('Cancel', Gtk.ResponseType.CANCEL, 'Add', Gtk.ResponseType.OK); dlg.set_select_multiple(True)
+        f = Gtk.FileFilter(); f.set_name('Fonts (.ttf .otf .ttc .otc)')
+        for pat in ('*.ttf', '*.otf', '*.ttc', '*.otc', '*.TTF', '*.OTF', '*.TTC', '*.OTC'): f.add_pattern(pat)
+        dlg.add_filter(f)
+        if dlg.run() == Gtk.ResponseType.OK:
+            files = dlg.get_filenames(); dlg.destroy()
+            def work():
+                rc, out = sh(FONTS, 'install', *files, timeout=300)
+                GLib.idle_add(self.fonts_done, rc, out)
+            threading.Thread(target=work, daemon=True).start()
+        else:
+            dlg.destroy()
+
+    def fonts_done(self, rc, out):
+        self.f_msg.set_text('Font added. Pick it above and press "Use as system font" if you want it everywhere.' if rc == 0 else 'That file could not be added (is it a real font?).')
+        self.reload_fonts(); return False
+
+    def on_remove_font(self, _b):
+        row = self.f_list.get_selected_row()
+        if row is not None and hasattr(row, 'path'):
+            sh(FONTS, 'remove', row.path); self.reload_fonts(); self.f_msg.set_text('Font removed.')
+
+    def on_font_apply(self, _b):
+        name = self.f_btn.get_font()
+        sh('xfconf-query', '-c', 'xsettings', '-p', '/Gtk/FontName', '-n', '-t', 'string', '-s', name)
+        self.f_msg.set_text('System font is now ' + name + '.')
 
     # ------------------------------------------------------------ Update
     def page_update(self):

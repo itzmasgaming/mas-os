@@ -8,6 +8,7 @@
 #   updates.mas               the update list
 # Then:
 #   1. Make a release called v0.3.1 in the GitHub repo  itzmasgaming/mas-os-updates  and attach mas-update-0.3.1.tar.gz to it.
+#   (new programs the update needs:  MAS_UPDATE_PACKAGES="python-xlib bubblewrap" ./make-update.sh ...)
 #   2. Put updates.mas in the main branch of that repo (replace the old one).
 # Every installed MAS finds it within 24 hours and updates itself.
 set -euo pipefail
@@ -32,11 +33,13 @@ OUT="dist/mas-update-$VER.tar.gz"
 tar --owner=0 --group=0 --numeric-owner -C overlay -czf "$OUT" "${EXIST[@]}"
 SHA="$(sha256sum "$OUT" | cut -d' ' -f1)"
 URL="https://github.com/$REPO/releases/download/v$VER/mas-update-$VER.tar.gz"
-python3 - "$VER" "$NOTES" "$URL" "$SHA" "$REBOOT" "$SYSUP" > dist/updates.mas <<'PY'
+python3 - "$VER" "$NOTES" "$URL" "$SHA" "$REBOOT" "$SYSUP" "${MAS_UPDATE_PACKAGES:-}" > dist/updates.mas <<'PY'
 import json, sys, time
-ver, notes, url, sha, reboot, sysup = sys.argv[1:7]
-print(json.dumps({"latest": ver, "released": time.strftime("%Y-%m-%d"), "notes": notes,
-                  "payload": {"url": url, "sha256": sha}, "reboot": reboot == "yes", "system_upgrade": sysup == "yes"}, indent=2))
+ver, notes, url, sha, reboot, sysup, pk = sys.argv[1:8]
+d = {"latest": ver, "released": time.strftime("%Y-%m-%d"), "notes": notes,
+     "payload": {"url": url, "sha256": sha}, "reboot": reboot == "yes", "system_upgrade": sysup == "yes"}
+if pk.strip(): d["packages"] = pk.split()      # new programs the update needs (installed with pacman)
+print(json.dumps(d, indent=2))
 PY
 echo "Made:"; ls -lh "$OUT" dist/updates.mas
 echo

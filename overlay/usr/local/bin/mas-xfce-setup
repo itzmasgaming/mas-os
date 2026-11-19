@@ -1,7 +1,23 @@
 #!/usr/bin/env bash
-# mas-xfce-setup - runs at every login: applies the saved look (mas-appearance) and warms up Wine once.
+# mas-xfce-setup - runs at every login:
+#  1. marks the desktop launchers as trusted (so XFCE does not show "Untrusted application launcher")
+#  2. warms up Wine once
+#  3. applies the saved look (mas-appearance)
+if [[ -d "$HOME/Desktop" ]]; then
+  for f in "$HOME"/Desktop/*.desktop; do
+    [[ -f "$f" ]] || continue
+    chmod u+x "$f" 2>/dev/null
+    sum="$(sha256sum "$f" 2>/dev/null | cut -d' ' -f1)"
+    [[ -n "$sum" ]] && gio set -t string "$f" metadata::xfce-exe-checksum "$sum" >/dev/null 2>&1
+    gio set "$f" metadata::trusted true >/dev/null 2>&1
+  done
+fi
 if [[ ! -e "$HOME/.config/mas/wine-ready" ]] && command -v wineboot >/dev/null 2>&1; then
   mkdir -p "$HOME/.config/mas"
   ( WINEDEBUG=-all wineboot -u >/dev/null 2>&1 && touch "$HOME/.config/mas/wine-ready" ) &
+fi
+# Ctrl+Shift+Esc opens Task Manager
+if command -v xfconf-query >/dev/null 2>&1; then
+  xfconf-query -c xfce4-keyboard-shortcuts -n -t string -p '/commands/custom/<Primary><Shift>Escape' -s mas-taskmgr >/dev/null 2>&1
 fi
 exec /usr/local/bin/mas-appearance apply

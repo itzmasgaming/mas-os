@@ -1,0 +1,378 @@
+#!/usr/bin/python3
+"""mas-taskmgr - Task Manager (Processes + Performance), like Windows 10.   Shortcut: Ctrl+Shift+Esc"""
+import math, os, re, signal, sys, time
+
+import gi
+gi.require_version('Gtk', '3.0'); gi.require_version('Gdk', '3.0')
+from gi.repository import Gtk, Gdk, GLib
+import cairo
+try:
+    from Xlib import display as xdisplay, X, Xatom
+except Exception:
+    xdisplay = None
+
+CLK = os.sysconf('SC_CLK_TCK'); PAGE = os.sysconf('SC_PAGE_SIZE'); NCPU = os.cpu_count() or 1
+ME = os.getuid()
+HIST = 60
+COLORS = {'cpu': (0.31, 0.62, 1.0), 'mem': (0.63, 0.42, 1.0), 'disk': (0.25, 0.76, 0.48), 'net': (0.94, 0.63, 0.31)}
+WINE = ('wine', 'wine64', 'wine-preloader', 'wine64-preloader', 'wineserver')
+
+
+def rd(path, default=''):
+    try:
+        with open(path) as f: return f.read()
+    except Exception:
+        return default
+
+
+def fmt_mem(b):
+    if b >= 1 << 30: return '%.1f GB' % (b / (1 << 30))
+    return '%.1f MB' % (b / (1 << 20))
+
+
+def fmt_rate(b):
+    if b >= 1 << 20: return '%.1f MB/s' % (b / (1 << 20))
+    return '%.0f KB/s' % (b / 1024)
+
+
+# ------------------------------------------------------------------ data
+class Procs:
+    def __init__(self):
+        self.prev = {}; self.t = time.time()
+
+    def snapshot(self, show_all):
+        now = time.time(); dt = max(0.2, now - self.t); self.t = now
+        out = {}; cur = {}
+        for n in os.listdir('/proc'):
+            if not n.isdigit(): continue
+            pid = int(n)
+            try:
+                uid = os.stat(f'/proc/{n}').st_uid
+                if uid != ME and not show_all: continue
+                s = rd(f'/proc/{n}/stat')
+                i = s.rfind(')')
+                if i < 0: continue
+                comm = s[s.find('(') + 1:i]; rest = s[i + 2:].split()
+                ticks = int(rest[11]) + int(rest[12]); rss = int(rest[21]) * PAGE
+                if int(rest[19]) and rest[0] == 'Z': continue
+                cur[pid] = ticks
+                cpu = 0.0
+                if pid in self.prev: cpu = max(0.0, (ticks - self.prev[pid]) / CLK / dt * 100.0 / NCPU)
+                name = comm
+                if comm in WINE or comm.startswith('wine'):
+                    args = rd(f'/proc/{n}/cmdline').split('\0')
+                    for a in args:
+                        if a.lower().endswith('.exe'): name = os.path.basename(a.replace('\\', '/')); break
+                elif len(comm) >= 15:
+                    a0 = rd(f'/proc/{n}/cmdline').split('\0')[0]
+                    if a0: name = os.path.basename(a0)
+                out[pid] = (name, cpu, rss, uid)
+            except Exception:
+                continue
+        self.prev = cur
+        return out
+
+
+def windows_by_pid():
+    """{pid: window title} for the windows on screen (so a program with a window is listed under Apps)."""
+    res = {}
+    if xdisplay is None: return res
+    try:
+        d = xdisplay.Display(); root = d.screen().root
+        a_list = d.intern_atom('_NET_CLIENT_LIST'); a_pid = d.intern_atom('_NET_WM_PID'); a_name = d.intern_atom('_NET_WM_NAME')
+        p = root.get_full_property(a_list, Xatom.WINDOW)
+        for wid in (p.value if p else []):
+            w = d.create_resource_object('window', wid)
+            pp = w.get_full_property(a_pid, Xatom.CARDINAL)
+            nm = w.get_full_property(a_name, 0)
+            title = (nm.value.decode('utf-8', 'replace') if nm and isinstance(nm.value, bytes) else (w.get_wm_name() or ''))
+            if pp: res.setdefault(int(pp.value[0]), title)
+        d.close()
+    except Exception:
+        pass
+    return res
+
+
+class Perf:
+    def __init__(self):
+        self.h = {k: [0.0] * HIST for k in COLORS}
+        self.cpu_prev = self.cpu_times(); self.disk_prev = self.disk(); self.net_prev = self.net(); self.t = time.time()
+        self.cur = {}
+        self.model = ''
+        for l in rd('/proc/cpuinfo').splitlines():
+            if l.startswith('model name'): self.model = l.split(':', 1)[1].strip(); break
+
+    @staticmethod
+    def cpu_times():
+        l = rd('/proc/stat').splitlines()[0].split()[1:]
+        v = [int(x) for x in l]; idle = v[3] + (v[4] if len(v) > 4 else 0)
+        return sum(v), idle
+
+    @staticmethod
+    def disk():
+        r = w = 0
+        for l in rd('/proc/diskstats').splitlines():
+            f = l.split()
+            if len(f) > 9 and re.fullmatch(r'(sd[a-z]+|vd[a-z]+|xvd[a-z]+|nvme\d+n\d+|mmcblk\d+)', f[2]):
+                r += int(f[5]) * 512; w += int(f[9]) * 512
+        return r, w
+
+    @staticmethod
+    def net():
+        rx = tx = 0
+        for l in rd('/proc/net/dev').splitlines()[2:]:
+            if ':' not in l: continue
+            n, v = l.split(':', 1)
+            if n.strip() == 'lo': continue
+            f = v.split(); rx += int(f[0]); tx += int(f[8])
+        return rx, tx
+
+    def sample(self):
+        now = time.time(); dt = max(0.2, now - self.t); self.t = now
+        t, i = self.cpu_times(); pt, pi = self.cpu_prev; self.cpu_prev = (t, i)
+        cpu = 100.0 * (1 - (i - pi) / max(1, t - pt))
+        mi = {}
+        for l in rd('/proc/meminfo').splitlines():
+            k, v = l.split(':', 1); mi[k] = int(v.split()[0]) * 1024
+        total = mi.get('MemTotal', 1); avail = mi.get('MemAvailable', 0)
+        r, w = self.disk(); pr, pw = self.disk_prev; self.disk_prev = (r, w)
+        rx, tx = self.net(); prx, ptx = self.net_prev; self.net_prev = (rx, tx)
+        self.cur = {'cpu': cpu, 'mem_total': total, 'mem_used': total - avail, 'mem': 100.0 * (total - avail) / total,
+                    'dr': (r - pr) / dt, 'dw': (w - pw) / dt, 'rx': (rx - prx) / dt, 'tx': (tx - ptx) / dt}
+        self.cur['disk'] = self.cur['dr'] + self.cur['dw']; self.cur['net'] = self.cur['rx'] + self.cur['tx']
+        for k in COLORS:
+            self.h[k] = (self.h[k] + [self.cur[k]])[-HIST:]
+
+
+# ------------------------------------------------------------------ UI
+def is_dark(widget):
+    c = widget.get_style_context().get_color(Gtk.StateFlags.NORMAL)
+    return (0.299 * c.red + 0.587 * c.green + 0.114 * c.blue) > 0.5
+
+
+def draw_graph(cr, w, h, hist, color, maxv, dark, grid=True, line=2.0):
+    bg = (0.05, 0.08, 0.17) if dark else (1, 1, 1)
+    cr.set_source_rgb(*bg); cr.rectangle(0, 0, w, h); cr.fill()
+    if grid:
+        cr.set_source_rgba(color[0], color[1], color[2], 0.18); cr.set_line_width(1)
+        for i in range(1, 10):
+            x = w * i / 10; cr.move_to(x + .5, 0); cr.line_to(x + .5, h)
+        for i in range(1, 4):
+            y = h * i / 4; cr.move_to(0, y + .5); cr.line_to(w, y + .5)
+        cr.stroke()
+    n = len(hist); step = w / (n - 1)
+    pts = [(i * step, h - min(1.0, v / maxv) * (h - 2) - 1) for i, v in enumerate(hist)]
+    cr.move_to(0, h)
+    for x, y in pts: cr.line_to(x, y)
+    cr.line_to(w, h); cr.close_path(); cr.set_source_rgba(color[0], color[1], color[2], 0.28); cr.fill()
+    cr.move_to(*pts[0])
+    for x, y in pts[1:]: cr.line_to(x, y)
+    cr.set_source_rgb(*color); cr.set_line_width(line); cr.stroke()
+    cr.set_source_rgb(*color); cr.set_line_width(1); cr.rectangle(.5, .5, w - 1, h - 1); cr.stroke()
+
+
+class TaskManager(Gtk.Window):
+    def __init__(self):
+        super().__init__(title='Task Manager')
+        self.set_default_size(860, 580); self.set_icon_name('utilities-system-monitor')
+        self.procs = Procs(); self.perf = Perf(); self.show_all_users = False; self.tick = 0
+        self.rows = {}; self.sel_key = 'cpu'
+        nb = self.nb = Gtk.Notebook(); self.add(nb)
+        nb.append_page(self.build_procs(), Gtk.Label(label='Processes'))
+        nb.append_page(self.build_perf(), Gtk.Label(label='Performance'))
+        self.connect('destroy', Gtk.main_quit)
+        self.show_all()
+        if '--performance' in sys.argv: nb.set_current_page(1)
+        self.refresh_procs(); self.view.expand_all(); self.perf.sample(); self.refresh_perf()
+        GLib.timeout_add(1000, self.on_tick)
+
+    # ---- processes
+    def build_procs(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=12)
+        # name, cpu text, mem text, pid text, cpu num, mem num, pid num, group?
+        self.store = Gtk.TreeStore(str, str, str, str, float, float, int, bool)
+        self.g_apps = self.store.append(None, ['Apps', '', '', '', -1.0, -1.0, 0, True])
+        self.g_bg = self.store.append(None, ['Background processes', '', '', '', -2.0, -2.0, 0, True])
+        self.sorted = Gtk.TreeModelSort(model=self.store)
+        self.view = Gtk.TreeView(model=self.sorted); self.view.set_rubber_banding(False)
+        for title, col, sortcol, align in (('Name', 0, 0, 0.0), ('CPU', 1, 4, 1.0), ('Memory', 2, 5, 1.0), ('PID', 3, 6, 1.0)):
+            r = Gtk.CellRendererText(xalign=align, ellipsize=3)
+            c = Gtk.TreeViewColumn(title, r, text=col); c.set_sort_column_id(sortcol); c.set_resizable(True)
+            if col == 0: c.set_expand(True)
+            else: c.set_min_width(110); c.set_alignment(align)
+            self.view.append_column(c)
+        self.sorted.set_sort_column_id(5, Gtk.SortType.DESCENDING)
+        self.sorted.set_sort_func(5, self.sort_num, 5); self.sorted.set_sort_func(4, self.sort_num, 4)
+        self.view.expand_all()
+        self.view.connect('button-press-event', self.on_press)
+        self.view.get_selection().connect('changed', self.on_sel)
+        sc = Gtk.ScrolledWindow(); sc.add(self.view); box.pack_start(sc, True, True, 0)
+        bar = Gtk.Box(spacing=10)
+        self.chk = Gtk.CheckButton(label='Show processes from all users'); self.chk.connect('toggled', lambda b: self.set_all(b.get_active()))
+        bar.pack_start(self.chk, False, False, 0)
+        self.msg = Gtk.Label(label='', xalign=0); self.msg.get_style_context().add_class('mas-sub'); bar.pack_start(self.msg, True, True, 6)
+        self.end = Gtk.Button(label='End task'); self.end.get_style_context().add_class('suggested-action'); self.end.set_sensitive(False)
+        self.end.connect('clicked', lambda _b: self.end_task(False))
+        bar.pack_end(self.end, False, False, 0)
+        box.pack_start(bar, False, False, 0)
+        return box
+
+    def sort_num(self, model, a, b, col):
+        # keep the two group rows on top, whatever the sort direction does to the rest
+        va, vb = model.get_value(a, col), model.get_value(b, col)
+        ga, gb = model.get_value(a, 7), model.get_value(b, 7)
+        if ga or gb:
+            return (va > vb) - (va < vb) if (ga and gb) else (-1 if ga else 1) * (1 if self.sorted.get_sort_column_id()[1] == Gtk.SortType.ASCENDING else -1)
+        return (va > vb) - (va < vb)
+
+    def set_all(self, v):
+        self.show_all_users = v; self.refresh_procs()
+
+    def refresh_procs(self):
+        snap = self.procs.snapshot(self.show_all_users); wins = windows_by_pid()
+        seen = set()
+        for pid, (name, cpu, rss, uid) in snap.items():
+            app = pid in wins
+            label = wins[pid] if app and wins[pid] else name
+            if app and wins[pid] and wins[pid] != name: label = f'{name}  —  {wins[pid]}'
+            vals = [label, '%.1f%%' % cpu, fmt_mem(rss), str(pid), cpu, float(rss), pid, False]
+            seen.add(pid)
+            r = self.rows.get(pid)
+            parent = self.g_apps if app else self.g_bg
+            if r is None or r[1] != app:
+                if r is not None: self.store.remove(r[0])
+                it = self.store.append(parent, vals); self.rows[pid] = (it, app)
+            else:
+                for i, v in enumerate(vals): self.store.set_value(r[0], i, v)
+        for pid in [p for p in self.rows if p not in seen]:
+            try: self.store.remove(self.rows[pid][0])
+            except Exception: pass
+            del self.rows[pid]
+        na = sum(1 for p, r in self.rows.items() if r[1]); nb = len(self.rows) - na
+        self.store.set_value(self.g_apps, 0, f'Apps ({na})'); self.store.set_value(self.g_bg, 0, f'Background processes ({nb})')
+        self.store.set_value(self.g_apps, 1, ''); self.store.set_value(self.g_bg, 1, '')
+
+    def selected_pid(self):
+        model, it = self.view.get_selection().get_selected()
+        if not it or model.get_value(it, 7): return None
+        return model.get_value(it, 6)
+
+    def on_sel(self, _s):
+        self.end.set_sensitive(self.selected_pid() is not None)
+
+    def on_press(self, view, ev):
+        if ev.button == 3:
+            hit = view.get_path_at_pos(int(ev.x), int(ev.y))
+            if hit:
+                view.get_selection().select_path(hit[0])
+                if self.selected_pid() is not None:
+                    m = Gtk.Menu()
+                    a = Gtk.MenuItem.new_with_label('End task'); a.connect('activate', lambda _w: self.end_task(False)); m.append(a)
+                    b = Gtk.MenuItem.new_with_label('Force end (kill)'); b.connect('activate', lambda _w: self.end_task(True)); m.append(b)
+                    m.show_all(); m.popup_at_pointer(ev)
+            return True
+        return False
+
+    def end_task(self, force):
+        pid = self.selected_pid()
+        if pid is None: return
+        try:
+            os.kill(pid, signal.SIGKILL if force else signal.SIGTERM)
+            self.msg.set_text('Sent the stop signal to %d.' % pid if not force else 'Killed %d.' % pid)
+            if not force:
+                GLib.timeout_add(4000, self.kill_if_alive, pid)
+        except PermissionError:
+            self.msg.set_text('You are not allowed to end that process.')
+        except ProcessLookupError:
+            self.msg.set_text('That process has already ended.')
+        GLib.timeout_add(600, lambda: (self.refresh_procs(), False)[1])
+
+    def kill_if_alive(self, pid):
+        try:
+            os.kill(pid, 0)
+            os.kill(pid, signal.SIGKILL)
+        except Exception:
+            pass
+        return False
+
+    # ---- performance
+    def build_perf(self):
+        box = Gtk.Box(spacing=14, margin=12)
+        left = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6); left.set_size_request(230, -1)
+        self.tiles = {}
+        for key, title in (('cpu', 'CPU'), ('mem', 'Memory'), ('disk', 'Disk'), ('net', 'Network')):
+            b = Gtk.ToggleButton(); b.get_style_context().add_class('mas-card')
+            h = Gtk.Box(spacing=10)
+            da = Gtk.DrawingArea(); da.set_size_request(76, 50); da.connect('draw', self.draw_tile, key)
+            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            t = Gtk.Label(xalign=0); t.set_markup('<b>%s</b>' % title)
+            val = Gtk.Label(xalign=0); val.get_style_context().add_class('mas-sub')
+            v.pack_start(t, False, False, 0); v.pack_start(val, False, False, 0)
+            h.pack_start(da, False, False, 0); h.pack_start(v, True, True, 0); b.add(h)
+            b.connect('clicked', lambda _b, k=key: self.select_perf(k))
+            self.tiles[key] = (b, da, val); left.pack_start(b, False, False, 0)
+        box.pack_start(left, False, False, 0)
+        right = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        self.p_title = Gtk.Label(xalign=0); self.p_title.get_style_context().add_class('mas-title')
+        self.p_sub = Gtk.Label(xalign=1); self.p_sub.get_style_context().add_class('mas-sub')
+        top = Gtk.Box(); top.pack_start(self.p_title, True, True, 0); top.pack_end(self.p_sub, False, False, 0)
+        right.pack_start(top, False, False, 0)
+        self.big = Gtk.DrawingArea(); self.big.set_size_request(-1, 280); self.big.connect('draw', self.draw_big)
+        right.pack_start(self.big, True, True, 0)
+        self.p_info = Gtk.Label(xalign=0, yalign=0); self.p_info.set_line_wrap(True); right.pack_start(self.p_info, False, False, 0)
+        box.pack_start(right, True, True, 0)
+        self.select_perf('cpu')
+        return box
+
+    def select_perf(self, key):
+        self.sel_key = key
+        for k, (b, _d, _v) in self.tiles.items(): b.set_active(k == key)
+        self.refresh_perf()
+
+    def draw_tile(self, da, cr, key):
+        a = da.get_allocation(); mx = 100.0 if key in ('cpu', 'mem') else max(1.0, max(self.perf.h[key]), 1 << 20)
+        draw_graph(cr, a.width, a.height, self.perf.h[key], COLORS[key], mx, is_dark(self), grid=False, line=1.4)
+
+    def draw_big(self, da, cr):
+        a = da.get_allocation(); k = self.sel_key
+        mx = 100.0 if k in ('cpu', 'mem') else max(max(self.perf.h[k]) * 1.2, 1 << 20)
+        draw_graph(cr, a.width, a.height, self.perf.h[k], COLORS[k], mx, is_dark(self))
+
+    def refresh_perf(self):
+        c = self.perf.cur
+        if not c: return
+        self.tiles['cpu'][2].set_text('%.0f%%' % c['cpu'])
+        self.tiles['mem'][2].set_text('%s (%.0f%%)' % (fmt_mem(c['mem_used']), c['mem']))
+        self.tiles['disk'][2].set_text(fmt_rate(c['disk']))
+        self.tiles['net'][2].set_text('S %s  R %s' % (fmt_rate(c['tx']), fmt_rate(c['rx'])))
+        k = self.sel_key
+        up = float(rd('/proc/uptime', '0 0').split()[0]); d, rem = divmod(int(up), 86400); hh, rem = divmod(rem, 3600); mm = rem // 60
+        nproc = sum(1 for n in os.listdir('/proc') if n.isdigit())
+        if k == 'cpu':
+            self.p_title.set_text('CPU'); self.p_sub.set_text(self.perf.model)
+            self.p_info.set_text('Utilization: %.0f%%\nCores: %d\nProcesses: %d\nUp time: %d:%02d:%02d' % (c['cpu'], NCPU, nproc, d * 24 + hh, mm, int(up) % 60))
+        elif k == 'mem':
+            self.p_title.set_text('Memory'); self.p_sub.set_text(fmt_mem(c['mem_total']))
+            self.p_info.set_text('In use: %s\nAvailable: %s\nTotal: %s' % (fmt_mem(c['mem_used']), fmt_mem(c['mem_total'] - c['mem_used']), fmt_mem(c['mem_total'])))
+        elif k == 'disk':
+            self.p_title.set_text('Disk'); self.p_sub.set_text('read + write')
+            self.p_info.set_text('Read: %s\nWrite: %s' % (fmt_rate(c['dr']), fmt_rate(c['dw'])))
+        else:
+            self.p_title.set_text('Network'); self.p_sub.set_text('all connections')
+            self.p_info.set_text('Send: %s\nReceive: %s' % (fmt_rate(c['tx']), fmt_rate(c['rx'])))
+        self.big.queue_draw()
+        for _b, da, _v in self.tiles.values(): da.queue_draw()
+
+    def on_tick(self):
+        self.tick += 1
+        self.perf.sample(); self.refresh_perf()
+        if self.tick % 2 == 0: self.refresh_procs()
+        return True
+
+
+def main():
+    TaskManager(); Gtk.main()
+
+
+if __name__ == '__main__':
+    main()

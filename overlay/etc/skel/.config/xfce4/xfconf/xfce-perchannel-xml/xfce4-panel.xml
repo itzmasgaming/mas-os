@@ -62,7 +62,7 @@
     </property>
     <property name="plugin-8" type="string" value="tasklist">
       <property name="show-labels" type="bool" value="false"/>
-      <property name="grouping" type="uint" value="1"/>
+      <property name="grouping" type="uint" value="0"/>
       <property name="flat-buttons" type="bool" value="true"/>
       <property name="show-handle" type="bool" value="false"/>
       <property name="include-all-workspaces" type="bool" value="false"/>
