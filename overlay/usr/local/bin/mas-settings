@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""mas-settings - MAS Settings: Personalize (dark/light, wallpaper) and Update.   mas-settings [personalize|update|about]"""
+"""mas-settings - MAS Settings (home with categories, like Windows 10).   mas-settings [home|personalize|fonts|update|about|<category>]"""
 import json, os, subprocess, sys, threading, time
 
 import gi
@@ -10,7 +10,6 @@ SHARE = os.environ.get('MAS_SHARE', '/usr/share/mas')
 APPEAR = os.environ.get('MAS_APPEARANCE', '/usr/local/bin/mas-appearance')
 UPDATE = os.environ.get('MAS_UPDATE', '/usr/local/bin/mas-update')
 FONTS = os.environ.get('MAS_FONTS', '/usr/local/bin/mas-fonts')
-PAGES = [('personalize', 'Personalize', 'mas-personalize'), ('fonts', 'Fonts', 'mas-fonts'), ('update', 'Update', 'mas-update'), ('about', 'About', 'mas-settings')]
 BACKS = [('mas', 'MAS'), ('mountains', 'Mountains'), ('midnight', 'Midnight'), ('aurora', 'Aurora')]
 
 
@@ -34,39 +33,362 @@ def label(text, cls=None, xalign=0.0, wrap=False):
     return l
 
 
+DEFAULT_ON = {'/Net/EnableEventSounds', '/Net/CursorBlink', '/Gtk/EnableAnimations', '/general/use_compositing', '/general/snap_to_border', '/xfce4-power-manager/dpms-enabled', '/general/tile_on_move', '/general/zoom_desktop'}
+
+# ---------------------------------------------------------------- the settings catalogue
+# kinds: page (opens a MAS page) | run (starts a program) | toggle (xfconf bool/int) | choice (xfconf int) | cmdtoggle | cmdchoice | action
+def T(ch, prop, title, desc, on=True, off=False, typ='bool'):
+    return dict(kind='toggle', ch=ch, prop=prop, title=title, desc=desc, on=on, off=off, typ=typ)
+
+def C(ch, prop, title, desc, opts, default=None):
+    return dict(kind='choice', ch=ch, prop=prop, title=title, desc=desc, opts=opts, default=default if default is not None else opts[0][1])
+
+def R(title, desc, cmd):
+    return dict(kind='run', title=title, desc=desc, cmd=cmd)
+
+def P(title, desc, page):
+    return dict(kind='page', title=title, desc=desc, page=page)
+
+TERM = ['xfce4-terminal', '-x']
+ZONES = ['UTC', 'Africa/Cairo', 'Africa/Lagos', 'America/Chicago', 'America/Los_Angeles', 'America/New_York', 'America/Sao_Paulo',
+         'Asia/Dhaka', 'Asia/Dubai', 'Asia/Karachi', 'Asia/Kolkata', 'Asia/Shanghai', 'Asia/Singapore', 'Asia/Tokyo',
+         'Australia/Sydney', 'Europe/Berlin', 'Europe/Istanbul', 'Europe/London', 'Europe/Moscow', 'Europe/Paris', 'Pacific/Auckland']
+
+CATS = [
+ ('system', 'System', 'Display, sound, notifications, power', 'video-display-symbolic', [
+   R('Display', 'Resolution, scale, several screens', ['xfce4-display-settings']),
+   R('Sound', 'Volume, output and input devices', ['pavucontrol']),
+   T('xsettings', '/Net/EnableEventSounds', 'System sounds', 'Play a sound for alerts and events'),
+   R('Notifications', 'Position, theme and timeout of pop-ups', ['xfce4-notifyd-config']),
+   T('xfce4-notifyd', '/do-not-disturb', 'Do not disturb', 'Hide notification pop-ups'),
+   R('Power & battery', 'Sleep, lid, battery actions', ['xfce4-power-manager-settings']),
+   T('xfce4-power-manager', '/xfce4-power-manager/dpms-enabled', 'Turn the screen off when idle', 'Screen power saving'),
+   T('xfwm4', '/general/snap_to_border', 'Snap windows to edges', 'Windows stick to screen edges and each other'),
+   T('xfwm4', '/general/tile_on_move', 'Tile windows at screen edges', 'Drag a window to a side to fill half of the screen'),
+   R('Task Manager', 'See and end running programs (Ctrl+Shift+Esc)', ['mas-taskmgr']),
+   R('Storage', 'Browse your drives and files', ['thunar', 'computer:///']),
+   P('About', 'MAS version and information', 'about')]),
+ ('devices', 'Devices', 'Bluetooth, printers, mouse', 'input-keyboard-symbolic', [
+   R('Mouse & touchpad', 'Speed, buttons, tap to click', ['xfce4-mouse-settings']),
+   R('Keyboard', 'Repeat rate, layout', ['xfce4-keyboard-settings']),
+   R('Keyboard shortcuts', 'Change or add shortcuts', ['xfce4-keyboard-settings']),
+   R('Bluetooth', 'Add and remove Bluetooth devices', ['blueman-manager']),
+   R('Printers & scanners', 'Add a printer', ['system-config-printer']),
+   R('Removable drives & AutoPlay', 'What happens when you plug in a drive or a card', ['thunar-volman-settings']),
+   R('Microphone & recording', 'Choose and test the input device', ['pavucontrol', '-t', '4'])]),
+ ('mobile', 'Mobile devices', 'Link your Android, iPhone', 'phone-symbolic', [
+   R('Phone link', 'Share files, notifications and clipboard with your phone (KDE Connect)', ['kdeconnect-app']),
+   R('Android (soon)', 'Run Android apps - not available yet', ['true'])]),
+ ('network', 'Network & Internet', 'Wi-Fi, airplane mode, VPN', 'network-wired-symbolic', [
+   R('Wi-Fi & Ethernet', 'Connections and saved networks', ['nm-connection-editor']),
+   dict(kind='cmdtoggle', title='Airplane mode', desc='Turn Wi-Fi and mobile data off',
+        get=['nmcli', 'radio', 'wifi'], is_on=lambda o: 'disabled' in o, on=['nmcli', 'radio', 'all', 'off'], off=['nmcli', 'radio', 'all', 'on']),
+   R('VPN', 'Add a VPN connection', ['nm-connection-editor']),
+   R('Default browser', 'Pick the program that opens websites', ['xfce4-mime-settings']),
+   R('Active connections', 'See what is connected to this computer (Shield)', TERM + ['bash', '-c', 'mas-shield --once; echo; read -n1 -p "Press a key..."'])]),
+ ('personalize', 'Personalization', 'Background, lock screen, colors', 'applications-graphics-symbolic', [
+   P('Colors (dark / light)', 'Switch between the dark and light look', 'personalize'),
+   P('Background', 'Pick a wallpaper or your own picture', 'personalize'),
+   P('Fonts', 'Add your own fonts', 'fonts'),
+   R('Taskbar', 'Buttons, clock and panel options', ['xfce4-panel', '--preferences']),
+   T('xfdesktop', '/desktop-icons/style', 'Show desktop icons', 'Icons for files and launchers on the desktop', on=2, off=0, typ='int'),
+   T('xfwm4', '/general/use_compositing', 'Window effects', 'Shadows and smooth transparency (turn off on slow machines)'),
+   T('xsettings', '/Gtk/EnableAnimations', 'Animations', 'Animate menus and buttons'),
+   R('Appearance (advanced)', 'GTK theme, icons, cursor', ['xfce4-appearance-settings'])]),
+ ('apps', 'Apps', 'Uninstall, defaults', 'view-grid-symbolic', [
+   R('Default apps', 'Which program opens which kind of file', ['xfce4-mime-settings']),
+   R('Startup apps', 'Programs that start when you sign in', ['xfce4-session-settings']),
+   R('Windows program settings', 'Wine: Windows version, drives, graphics, audio', ['winecfg']),
+   R('Windows program installer helper', 'Winetricks: add fonts, runtimes and libraries', ['winetricks', '--gui']),
+   R('Ubuntu LTS', 'Open the Ubuntu window (apt works there)', ['mas-ubuntu']),
+   R('Sandbox', 'Run a Windows program in a throw-away space', ['mas-sandbox'])]),
+ ('accounts', 'Accounts', 'Your accounts, sign-in, family', 'avatar-default-symbolic', [
+   R('Manage accounts', 'Create or delete accounts', ['mas-accounts']),
+   R('Change password', 'Set a new password for this account', TERM + ['passwd']),
+   R('Lock screen', 'Lock this computer now', ['xflock4']),
+   R('Sign out', 'End this session', ['xfce4-session-logout', '--logout']),
+   R('Restart', 'Restart this computer', ['xfce4-session-logout', '--reboot']),
+   R('Shut down', 'Turn this computer off', ['xfce4-session-logout', '--halt'])]),
+ ('time', 'Time & Language', 'Speech, region, date', 'preferences-system-time-symbolic', [
+   dict(kind='cmdtoggle', title='Set time automatically', desc='Use internet time',
+        get=['timedatectl', 'show', '-p', 'NTP', '--value'], is_on=lambda o: o.strip() == 'yes',
+        on=['pkexec', 'timedatectl', 'set-ntp', 'true'], off=['pkexec', 'timedatectl', 'set-ntp', 'false']),
+   dict(kind='cmdchoice', title='Time zone', desc='Where you are', get=['timedatectl', 'show', '-p', 'Timezone', '--value'],
+        opts=[(z, z) for z in ZONES], setter=lambda v: ['pkexec', 'timedatectl', 'set-timezone', v]),
+   R('Keyboard layout', 'Add or change the typing language layout', ['xfce4-keyboard-settings']),
+   R('Region (language files)', 'Language packs are managed in the terminal', TERM + ['bash', '-c', 'localectl status; echo; read -n1 -p "Press a key..."'])]),
+ ('gaming', 'Gaming', 'Game Bar, captures, Game Mode', 'input-gaming-symbolic', [
+   R('Steam', 'Install and open Steam (Flatpak)', ['flatpak', 'run', 'com.valvesoftware.Steam']),
+   R('Game controllers', 'Test and calibrate gamepads in Wine', ['wine', 'control', 'joy.cpl']),
+   R('Windows compatibility', 'Wine settings for Windows games', ['winecfg']),
+   R('Graphics drivers info', 'Which GPU and driver are in use', TERM + ['bash', '-c', 'lspci -k | grep -A3 -i vga; echo; read -n1 -p "Press a key..."'])]),
+ ('ease', 'Ease of Access', 'Narrator, magnifier, high contrast', 'preferences-desktop-accessibility-symbolic', [
+   C('xsettings', '/Xft/DPI', 'Text size', 'Make text and the interface bigger', [('Normal', 96), ('Large', 120), ('Larger', 144), ('Huge', 168)]),
+   C('xsettings', '/Gtk/CursorThemeSize', 'Cursor size', 'Bigger mouse pointer', [('Small', 16), ('Normal', 24), ('Large', 32), ('Larger', 48), ('Huge', 64)], 24),
+   T('xsettings', '/Net/CursorBlink', 'Blinking text cursor', 'Turn off if blinking bothers you'),
+   T('xfwm4', '/general/zoom_desktop', 'Magnifier', 'Zoom the screen with Alt + mouse wheel'),
+   R('Keyboard accessibility', 'Sticky keys, slow keys, bounce keys', ['xfce4-accessibility-settings']),
+   R('Screen reader', 'Orca reads the screen aloud', ['orca'])]),
+ ('search', 'Search', 'Find my files, permissions', 'system-search-symbolic', [
+   R('Search apps and files', 'Open the search window', ['mas-start', 'search']),
+   T('thunar', '/last-show-hidden', 'Show hidden files', 'In the Files app'),
+   T('thunar', '/misc-single-click', 'Open items with one click', 'Instead of double click in the Files app')]),
+ ('privacy', 'Privacy', 'Location, camera, microphone', 'system-lock-screen-symbolic', [
+   R('Microphone', 'Which input is used', ['pavucontrol', '-t', '4']),
+   dict(kind='action', title='Clear recent files', desc='Forget the list of recently opened files', button='Clear',
+        cmd=['bash', '-c', 'rm -f "$HOME/.local/share/recently-used.xbel"']),
+   dict(kind='action', title='Clear thumbnail cache', desc='Free space used by picture previews', button='Clear',
+        cmd=['bash', '-c', 'rm -rf "$HOME/.cache/thumbnails"']),
+   dict(kind='action', title='Clear browser-independent cache', desc='Remove files in ~/.cache (programs rebuild them)', button='Clear',
+        cmd=['bash', '-c', 'find "$HOME/.cache" -mindepth 1 -maxdepth 1 ! -name mas -exec rm -rf {} +'])]),
+ ('update', 'Update & Security', 'MAS update, recovery, backup', 'software-update-available-symbolic', [
+   P('MAS Update', 'Check now, see what is new, install', 'update'),
+   R('Restore points', 'Go back to an earlier state of the system', ['mas-restore']),
+   R('Recovery key', 'Make a new recovery key for your password', TERM + ['bash', '-c', 'sudo mas-recovery new; echo; read -n1 -p "Press a key..."']),
+   R('For developers: terminal', 'Open a terminal', ['xfce4-terminal'])]),
+]
+PAGE_TITLES = {'personalize': 'Personalization', 'fonts': 'Fonts', 'update': 'MAS Update', 'about': 'About'}
+
+EXTRA_CSS = b"""
+.mas-avatar { background-color: #5b86ff; color: #fff; border-radius: 40px; font-size: 34px; font-weight: 800; min-width: 80px; min-height: 80px; }
+.mas-hero { padding: 18px 28px; }
+.mas-tile { background-color: transparent; border: 1px solid transparent; border-radius: 8px; padding: 12px; }
+.mas-tile:hover { background-color: alpha(#5b86ff, .14); border-color: alpha(#5b86ff, .45); }
+.mas-big { font-size: 22px; font-weight: 700; }
+.mas-setrow { padding: 12px 14px; border-radius: 12px; }
+"""
+
+
+def xq(ch, prop, *args):
+    return sh('xfconf-query', '-c', ch, '-p', prop, *args, timeout=8)
+
+
+def start(cmd):
+    import shutil
+    if shutil.which(cmd[0]) is None: return False
+    subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    return True
+
+
 class Settings(Gtk.Window):
     def __init__(self, page):
-        super().__init__(title='Settings · Personalize')
-        self.set_default_size(820, 600); self.set_icon_name('mas-settings')
-        self.busy = False
-        root = Gtk.Box(); self.add(root)
-        side = Gtk.ListBox(); side.set_selection_mode(Gtk.SelectionMode.SINGLE); side.set_size_request(190, -1)
-        side.get_style_context().add_class('sidebar')
+        super().__init__(title='Settings')
+        self.set_default_size(1000, 680); self.set_icon_name('mas-settings')
+        self.busy = False; self.history = []
+        prov = Gtk.CssProvider(); prov.load_from_data(EXTRA_CSS)
+        Gtk.StyleContext.add_provider_for_screen(self.get_screen(), prov, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        root = Gtk.Box(orientation=Gtk.Orientation.VERTICAL); self.add(root)
+        # header bar of the page (back button + title), hidden on the home screen
+        self.bar = Gtk.Box(spacing=10, margin=10)
+        self.back = Gtk.Button.new_from_icon_name('go-previous-symbolic', Gtk.IconSize.BUTTON); self.back.connect('clicked', lambda _b: self.go_back())
+        self.bar_title = label('', 'mas-big')
+        self.bar.pack_start(self.back, False, False, 0); self.bar.pack_start(self.bar_title, False, False, 6)
+        root.pack_start(self.bar, False, False, 0)
         self.stack = Gtk.Stack(); self.stack.set_transition_type(Gtk.StackTransitionType.CROSSFADE)
-        for key, title, icon in PAGES:
-            row = Gtk.ListBoxRow(); row.key = key
-            h = Gtk.Box(spacing=10, margin=10); h.pack_start(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.LARGE_TOOLBAR), False, False, 0)
-            h.pack_start(Gtk.Label(label=title, xalign=0), False, False, 0); row.add(h); side.add(row)
-        self.stack.add_named(self.page_personalize(), 'personalize')
-        self.stack.add_named(self.page_fonts(), 'fonts')
-        self.stack.add_named(self.page_update(), 'update')
-        self.stack.add_named(self.page_about(), 'about')
-        side.connect('row-selected', self.on_row)
-        root.pack_start(side, False, False, 0); root.pack_start(self.stack, True, True, 0)
-        self.side = side
+        root.pack_start(self.stack, True, True, 0)
+        self.stack.add_named(self.page_home(), 'home')
+        for key, _t, _s, _i, items in CATS: self.stack.add_named(self.page_category(key, _t, items), 'cat:' + key)
+        self.stack.add_named(self.page_search(), 'search')
+        for name, fn in (('personalize', self.page_personalize), ('fonts', self.page_fonts), ('update', self.page_update), ('about', self.page_about)):
+            self.stack.add_named(self.wrap_scroll(fn()), name)
         self.show_all()
-        side.select_row(side.get_row_at_index([p[0] for p in PAGES].index(page) if page in [p[0] for p in PAGES] else 0))
+        self.open(page if page != 'home' else 'home')
         GLib.timeout_add_seconds(3, self.tick)
 
-    def on_row(self, _lb, row):
-        if not row: return
-        self.stack.set_visible_child_name(row.key)
-        self.set_title('Settings · ' + dict((k, t) for k, t, _ in PAGES)[row.key])
-        if row.key == 'update': self.refresh_update()
+    # ---- navigation
+    def wrap_scroll(self, w):
+        sc = Gtk.ScrolledWindow(); sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC); sc.add(w); return sc
+
+    def open(self, name, push=True):
+        key = 'cat:' + name if name in [c[0] for c in CATS] else name
+        cur = self.stack.get_visible_child_name()
+        if push and cur and cur != key: self.history.append(cur)
+        self.stack.set_visible_child_name(key)
+        home = key == 'home'
+        self.bar.set_visible(not home)
+        title = PAGE_TITLES.get(key) or ({('cat:' + c[0]): c[1] for c in CATS}.get(key)) or ('Search results' if key == 'search' else '')
+        self.bar_title.set_text(title); self.set_title('Settings' + ('' if home else ' · ' + title))
+        if key == 'update': self.refresh_update()
+
+    def go_back(self):
+        self.open(self.history.pop() if self.history else 'home', push=False)
 
     def tick(self):
         if self.stack.get_visible_child_name() == 'update' and not self.busy: self.refresh_update()
         return True
+
+    # ---- home
+    def page_home(self):
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        hero = Gtk.Box(spacing=18); hero.get_style_context().add_class('mas-hero')
+        name = GLib.get_real_name()
+        if not name or name == 'Unknown': name = GLib.get_user_name()
+        face = os.path.expanduser('~/.face')
+        if os.path.exists(face):
+            try:
+                pb = GdkPixbuf.Pixbuf.new_from_file_at_size(face, 80, 80); av = Gtk.Image.new_from_pixbuf(pb)
+            except Exception: av = None
+        else: av = None
+        if av is None:
+            av = Gtk.Label(label=(name[:1] or 'M').upper()); av.get_style_context().add_class('mas-avatar')
+        who = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, valign=Gtk.Align.CENTER)
+        who.pack_start(label(name, 'mas-big'), False, False, 0); who.pack_start(label('Local account', 'mas-sub'), False, False, 0)
+        left = Gtk.Box(spacing=16); left.pack_start(av, False, False, 0); left.pack_start(who, False, False, 0)
+        logo = Gtk.Image.new_from_icon_name('mas-start', Gtk.IconSize.DIALOG); logo.set_pixel_size(72)
+        hero.pack_start(left, True, True, 0); hero.pack_start(logo, True, False, 0)
+        short = Gtk.Box(spacing=18, halign=Gtk.Align.END)
+        self.home_upd = self.shortcut('mas-update', 'MAS Update', 'Checking...', lambda: self.open('update'))
+        short.pack_start(self.home_upd[0], False, False, 0)
+        short.pack_start(self.shortcut('mas-restore', 'Restore points', 'Go back in time', lambda: start(['mas-restore']))[0], False, False, 0)
+        hero.pack_start(short, True, True, 0)
+        box.pack_start(hero, False, False, 0)
+        self.search = Gtk.SearchEntry(placeholder_text='Find a setting', halign=Gtk.Align.CENTER, width_request=420, margin_top=18, margin_bottom=10)
+        self.search.connect('search-changed', self.on_search); box.pack_start(self.search, False, False, 0)
+        grid = Gtk.FlowBox(max_children_per_line=5, min_children_per_line=2, selection_mode=Gtk.SelectionMode.NONE, homogeneous=True,
+                           column_spacing=6, row_spacing=6, margin=36, valign=Gtk.Align.START)
+        for key, title, sub, icon, items in CATS:
+            b = Gtk.Button(relief=Gtk.ReliefStyle.NONE); b.get_style_context().add_class('mas-tile')
+            h = Gtk.Box(spacing=14)
+            img = Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.DND); img.set_pixel_size(40); img.set_valign(Gtk.Align.START)
+            v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3)
+            t = label(title); t.set_markup('<b>%s</b>' % GLib.markup_escape_text(title))
+            d = label(sub, 'mas-sub', wrap=True); d.set_max_width_chars(26)
+            v.pack_start(t, False, False, 0); v.pack_start(d, False, False, 0)
+            h.pack_start(img, False, False, 0); h.pack_start(v, True, True, 0); b.add(h)
+            b.connect('clicked', lambda _b, k=key: self.open('cat:' + k))
+            grid.add(b)
+        box.pack_start(grid, False, False, 0)
+        sc = Gtk.ScrolledWindow(); sc.add(box); sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        GLib.idle_add(self.home_status)
+        return sc
+
+    def shortcut(self, icon, title, sub, cb):
+        b = Gtk.Button(relief=Gtk.ReliefStyle.NONE); b.get_style_context().add_class('mas-tile')
+        v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3, halign=Gtk.Align.START)
+        img = Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.LARGE_TOOLBAR); img.set_halign(Gtk.Align.START)
+        s = label(sub, 'mas-sub')
+        v.pack_start(img, False, False, 0); v.pack_start(label(title), False, False, 0); v.pack_start(s, False, False, 0)
+        b.add(v); b.connect('clicked', lambda _b: cb())
+        return b, s
+
+    def home_status(self):
+        def work():
+            rc, out = sh(UPDATE, 'status') if os.path.exists(UPDATE) else (1, '')
+            txt = 'Open to check'
+            try:
+                st = json.loads(out); txt = 'Update available' if st.get('available') else 'Up to date'
+            except Exception: pass
+            GLib.idle_add(self.home_upd[1].set_text, txt)
+        threading.Thread(target=work, daemon=True).start()
+        return False
+
+    # ---- a category page: the rows
+    def page_category(self, key, title, items):
+        sc = Gtk.ScrolledWindow(); sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=24)
+        for it in items: box.pack_start(self.make_row(it), False, False, 0)
+        sc.add(box); return sc
+
+    def page_search(self):
+        self.res_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=24)
+        sc = Gtk.ScrolledWindow(); sc.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC); sc.add(self.res_box); return sc
+
+    def on_search(self, entry):
+        q = entry.get_text().strip().lower()
+        if not q:
+            if self.stack.get_visible_child_name() == 'search': self.open('home', push=False)
+            return
+        for c in self.res_box.get_children(): self.res_box.remove(c)
+        n = 0
+        for key, ctitle, _s, _i, items in CATS:
+            for it in items:
+                if q in (it['title'] + ' ' + it['desc'] + ' ' + ctitle).lower():
+                    r = self.make_row(it, suffix=ctitle); self.res_box.pack_start(r, False, False, 0); n += 1
+        if not n: self.res_box.pack_start(label('No settings match "%s".' % q, 'mas-sub'), False, False, 0)
+        self.res_box.show_all()
+        if self.stack.get_visible_child_name() != 'search':
+            self.history = []; self.open('search')
+
+    def make_row(self, it, suffix=None):
+        card = Gtk.Box(spacing=12); card.get_style_context().add_class('mas-card')
+        v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        t = label(it['title']); t.set_markup('<b>%s</b>' % GLib.markup_escape_text(it['title']) + ('  <small>· %s</small>' % GLib.markup_escape_text(suffix) if suffix else ''))
+        v.pack_start(t, False, False, 0); v.pack_start(label(it['desc'], 'mas-sub', wrap=True), False, False, 0)
+        card.pack_start(v, True, True, 0)
+        k = it['kind']
+        if k in ('run', 'page', 'action'):
+            b = Gtk.Button(label=it.get('button', 'Open')); b.set_valign(Gtk.Align.CENTER)
+            b.connect('clicked', lambda _b, i=it: self.do(i, _b)); card.pack_start(b, False, False, 0)
+        elif k in ('toggle', 'cmdtoggle'):
+            sw = Gtk.Switch(valign=Gtk.Align.CENTER); card.pack_start(sw, False, False, 0)
+            self.load_toggle(it, sw)
+        elif k in ('choice', 'cmdchoice'):
+            cb = Gtk.ComboBoxText(valign=Gtk.Align.CENTER)
+            for lab, _v in it['opts']: cb.append_text(lab)
+            card.pack_start(cb, False, False, 0); self.load_choice(it, cb)
+        return card
+
+    def do(self, it, btn):
+        k = it['kind']
+        if k == 'page': self.open(it['page'])
+        elif k == 'run':
+            if it['title'].startswith('Android'): return self.toast(btn, 'Not available yet')
+            if not start(it['cmd']): self.toast(btn, 'Not installed on this system')
+        elif k == 'action':
+            sh(*it['cmd']); self.toast(btn, 'Done')
+
+    def toast(self, btn, text):
+        old = btn.get_label(); btn.set_label(text); GLib.timeout_add(1800, lambda: (btn.set_label(old), False)[1])
+
+    def load_toggle(self, it, sw):
+        def work():
+            if it['kind'] == 'toggle':
+                rc, out = xq(it['ch'], it['prop']); out = out.strip()
+                if rc != 0: on = it['typ'] == 'int' or it['prop'] in DEFAULT_ON
+                elif it['typ'] == 'int': on = out != str(it['off'])
+                else: on = out == 'true'
+            else:
+                rc, out = sh(*it['get']); on = bool(rc == 0 and it['is_on'](out))
+            def fin():
+                sw.set_active(on); sw.connect('notify::active', lambda s, _p: self.set_toggle(it, s))
+                return False
+            GLib.idle_add(fin)
+        threading.Thread(target=work, daemon=True).start()
+
+    def set_toggle(self, it, sw):
+        on = sw.get_active()
+        def work():
+            if it['kind'] == 'toggle':
+                if it['typ'] == 'int': val, typ = str(it['on'] if on else it['off']), 'int'
+                else: val, typ = ('true' if on else 'false'), 'bool'
+                xq(it['ch'], it['prop'], '-n', '-t', typ, '-s', val)
+            else:
+                sh(*(it['on'] if on else it['off']), timeout=60)
+        threading.Thread(target=work, daemon=True).start()
+
+    def load_choice(self, it, cb):
+        def work():
+            if it['kind'] == 'choice':
+                rc, out = xq(it['ch'], it['prop']); cur = out.strip() if rc == 0 else None
+                if cur in (None, '-1'): cur = str(it.get('default', it['opts'][0][1]))
+                idx = next((i for i, (_l, v) in enumerate(it['opts']) if str(v) == cur), -1)
+            else:
+                rc, out = sh(*it['get']); cur = out.strip()
+                idx = next((i for i, (_l, v) in enumerate(it['opts']) if v == cur), -1)
+            def fin():
+                if idx >= 0: cb.set_active(idx)
+                cb.connect('changed', lambda c: self.set_choice(it, c)); return False
+            GLib.idle_add(fin)
+        threading.Thread(target=work, daemon=True).start()
+
+    def set_choice(self, it, cb):
+        i = cb.get_active()
+        if i < 0: return
+        v = it['opts'][i][1]
+        def work():
+            if it['kind'] == 'choice': xq(it['ch'], it['prop'], '-n', '-t', 'int', '-s', str(v))
+            else: sh(*it['setter'](v), timeout=60)
+        threading.Thread(target=work, daemon=True).start()
 
     # ------------------------------------------------------------ Personalize
     def page_personalize(self):
@@ -281,7 +603,7 @@ class Settings(Gtk.Window):
 
 
 def main():
-    page = sys.argv[1] if len(sys.argv) > 1 else 'personalize'
+    page = sys.argv[1] if len(sys.argv) > 1 else 'home'
     w = Settings(page); w.connect('destroy', Gtk.main_quit); Gtk.main()
 
 

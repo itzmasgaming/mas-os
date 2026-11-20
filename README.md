@@ -105,3 +105,8 @@ New VM: Linux / Arch Linux (64-bit), 4 GB RAM or more, 2 CPUs, **40 GB disk**, *
 - **Task Manager** (`mas-taskmgr`, Ctrl+Shift+Esc, also in the taskbar right-click menu): Processes (Apps / Background, CPU, memory, PID, End task, Force end) and Performance (CPU, memory, disk, network graphs).
 - **Taskbar app buttons**: right-click a running program's button for Open/Restore, Minimize, Maximize and Close window. Every window now has its own button (no grouping).
 - Note: the new Ctrl+Shift+Esc shortcut is set at login; the no-grouping taskbar setting is in `/etc/skel`, so it applies to new accounts (existing accounts: Taskbar settings → Window buttons → Grouping: never).
+
+## v0.3.4
+- **Settings** has a Windows-10-style home: profile + logo header, search box and 13 category tiles (System, Devices, Mobile devices, Network & Internet, Personalization, Apps, Accounts, Time & Language, Gaming, Ease of Access, Search, Privacy, Update & Security) with 70+ settings inside. Switches and drop-downs change the setting at once (xfconf / nmcli / timedatectl); "Open" rows start the matching tool.
+- Taskbar right-click no longer flashes the stock menu for a second: button positions are cached, so the stock popup is closed as soon as it appears and the MAS menu follows.
+- ISO: `optional.txt` gets blueman, system-config-printer, kdeconnect, orca (Settings rows say "Not installed" if missing).

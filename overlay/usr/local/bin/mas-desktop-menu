@@ -276,6 +276,7 @@ class Daemon:
         self.a_desktop = self.xd.intern_atom('_NET_WM_WINDOW_TYPE_DESKTOP')
         self.a_dock = self.xd.intern_atom('_NET_WM_WINDOW_TYPE_DOCK')
         self.kind = None
+        self.btns = []
         self.menu = None
         self.px = self.py = 0
 
@@ -339,9 +340,10 @@ class Daemon:
             pass
         return names
 
-    def button_title_at(self, x, y):
-        """Title of the taskbar button under (x, y), read from the panel's accessibility tree."""
-        if Atspi is None: return None
+    def scan_buttons(self):
+        """All taskbar buttons (screen rectangle + title) from the panel's accessibility tree."""
+        out = []
+        if Atspi is None: return out
         try:
             desk = Atspi.get_desktop(0)
             for i in range(desk.get_child_count()):
@@ -354,14 +356,16 @@ class Daemon:
                         c = node.get_child_at_index(j)
                         if c is None: continue
                         if 'button' in c.get_role_name() and c.get_name():
-                            try:
-                                r = c.get_extents(Atspi.CoordType.SCREEN)
-                                if r.x <= x <= r.x + r.width and r.y <= y <= r.y + r.height: return c.get_name()
-                            except Exception:
-                                pass
+                            r = c.get_extents(Atspi.CoordType.SCREEN)
+                            if r.width > 1 and r.x > -1000: out.append((r.x, r.y, r.width, r.height, c.get_name()))
                         if depth < 8: stack.append((c, depth + 1))
         except Exception:
             pass
+        return out
+
+    def button_title_at(self, x, y):
+        for bx, by, bw, bh, t in self.btns:
+            if bx <= x <= bx + bw and by <= y <= by + bh: return t
         return None
 
     def window_by_title(self, title):
@@ -388,27 +392,34 @@ class Daemon:
         dbg('click', x, y, self.kind)
         if not self.kind: return False
         self.px, self.py = x, y
+        if self.kind == 'panel':
+            title = self.button_title_at(x, y)
+            win = self.window_by_title(title) if title else None
+            dbg('panel button', title, win)
+            if title and win is None: return False       # a launcher button: leave its own menu alone
+            self.win = win
+            self.waited = 0
+            GLib.timeout_add(10, self.replace_native)     # close the stock popup the moment it shows, then show ours
+            return False
         GLib.timeout_add(150, self.maybe_show)
         return False
 
+    def replace_native(self):
+        if self.popup_showing():
+            self.press_escape(); GLib.timeout_add(40, self.show_ours)
+            return False
+        self.waited += 10
+        if self.waited > 500:
+            self.show_ours(); return False
+        return True
+
     def maybe_show(self):
-        app, marks = (('xfdesktop', ('Create Launcher...', 'Desktop Settings...', 'Arrange Desktop Icons'))
-                      if self.kind == 'desktop' else ('xfce4-panel', ('Separator',)))
-        if self.kind == 'panel':
-            # a right-click on a running program's taskbar button: Windows-style window menu instead of the stock one
-            title = self.button_title_at(self.px, self.py)
-            win = self.window_by_title(title) if title else None
-            dbg('panel button', title, win)
-            if win is not None:
-                self.win = win
-                if self.popup_showing(): self.press_escape(); GLib.timeout_add(120, self.show_ours)
-                else: self.show_ours()
-                return False
+        app, marks = ('xfdesktop', ('Create Launcher...', 'Desktop Settings...', 'Arrange Desktop Icons'))
         if self.popup_showing():
             names = self.menu_items(app)
             dbg('popup showing;', app, 'items:', names[:6])
             if not any(n in names for n in marks):
-                return False                      # the menu of an icon / a taskbar button: leave it alone
+                return False                      # the menu of an icon: leave it alone
             self.press_escape()                   # close the plain menu, ours replaces it
             GLib.timeout_add(120, self.show_ours)
             return False
@@ -452,6 +463,12 @@ def main():
     # xfdesktop's own background menu is switched off; this one replaces it
     xset('/desktop-menu/show', 'bool', 'false')
     dm = Daemon()
+    def scanner():
+        while True:
+            try: dm.btns = dm.scan_buttons()
+            except Exception: pass
+            time.sleep(1.5)
+    threading.Thread(target=scanner, daemon=True).start()
     threading.Thread(target=record_thread, args=(dm,), daemon=True).start()
     Gtk.main()
 

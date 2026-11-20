@@ -20,3 +20,9 @@ snap-pac
 ntfs-3g
 # Lets the Settings app switch GTK4 apps between dark and light
 gsettings-desktop-schemas
+
+# Used by Settings (a row says "Not installed" when its program is missing)
+blueman
+system-config-printer
+kdeconnect
+orca
