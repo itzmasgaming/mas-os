@@ -2,7 +2,7 @@
 Type=Application
 Name=Settings
 Comment=Dark / light mode, background, updates
-Exec=/usr/local/bin/mas-settings
+Exec=/usr/local/bin/mas-launch /usr/local/bin/mas-settings
 Icon=mas-settings
 Terminal=false
 Categories=Settings;

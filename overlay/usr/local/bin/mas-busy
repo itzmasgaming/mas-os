@@ -1,0 +1,66 @@
+#!/usr/bin/python3
+"""mas-busy - shows the busy (spinning) mouse pointer, like Windows, until the program that is starting shows its window
+(or after 7 seconds at most), so nobody clicks again and again.   mas-busy [seconds]"""
+import ctypes, ctypes.util, os, sys, time
+
+LIMIT = float(sys.argv[1]) if len(sys.argv) > 1 else 7.0
+try:
+    from Xlib import display as xd, Xatom
+except Exception:
+    sys.exit(0)
+
+x11 = ctypes.CDLL(ctypes.util.find_library('X11') or 'libX11.so.6')
+xc = ctypes.CDLL(ctypes.util.find_library('Xcursor') or 'libXcursor.so.1')
+x11.XOpenDisplay.restype = ctypes.c_void_p; x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+x11.XDefaultRootWindow.restype = ctypes.c_ulong; x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+x11.XDefineCursor.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_ulong]
+x11.XFlush.argtypes = [ctypes.c_void_p]
+xc.XcursorLibraryLoadCursor.restype = ctypes.c_ulong; xc.XcursorLibraryLoadCursor.argtypes = [ctypes.c_void_p, ctypes.c_char_p]
+
+dpy = x11.XOpenDisplay(None)
+if not dpy: sys.exit(0)
+root = x11.XDefaultRootWindow(dpy)
+
+
+def cursor(*names):
+    for n in names:
+        c = xc.XcursorLibraryLoadCursor(dpy, n.encode())
+        if c: return c
+    return 0
+
+
+def set_cursor(c):
+    if c:
+        x11.XDefineCursor(dpy, root, c); x11.XFlush(dpy)
+
+
+def clients(d):
+    p = d.screen().root.get_full_property(d.intern_atom('_NET_CLIENT_LIST'), Xatom.WINDOW)
+    return set(p.value) if p else set()
+
+
+# one busy pointer at a time: a second call just extends the first
+lock = '/run/user/%d/mas-busy.pid' % os.getuid()
+try:
+    with open(lock) as f: other = int(f.read().strip())
+    os.kill(other, 0)
+    os.utime(lock, None); sys.exit(0)
+except Exception:
+    pass
+try: open(lock, 'w').write(str(os.getpid()))
+except Exception: pass
+
+d = xd.Display(); before = clients(d); start = time.time(); seen_at = None
+set_cursor(cursor('left_ptr_watch', 'watch', 'wait'))
+try:
+    while time.time() - start < LIMIT:
+        time.sleep(0.12)
+        now = clients(d)
+        if now - before and seen_at is None: seen_at = time.time()
+        if seen_at and time.time() - seen_at > 0.6: break
+        try: os.stat(lock)
+        except Exception: break
+finally:
+    set_cursor(cursor('left_ptr', 'arrow'))
+    try: os.remove(lock)
+    except Exception: pass

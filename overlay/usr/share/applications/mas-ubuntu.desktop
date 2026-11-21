@@ -2,7 +2,7 @@
 Type=Application
 Name=Ubuntu LTS
 Comment=Ubuntu command line (apt and bash)
-Exec=/usr/local/bin/mas-ubuntu
+Exec=/usr/local/bin/mas-launch /usr/local/bin/mas-ubuntu
 Icon=mas-ubuntu
 Terminal=false
 Categories=System;

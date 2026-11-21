@@ -2,7 +2,7 @@
 Type=Application
 Name=Brave
 Comment=Web browser (installed on first use)
-Exec=/usr/local/bin/mas-brave %U
+Exec=/usr/local/bin/mas-launch /usr/local/bin/mas-brave %U
 Icon=mas-brave
 Terminal=false
 Categories=Network;WebBrowser;

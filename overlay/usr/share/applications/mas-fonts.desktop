@@ -2,7 +2,7 @@
 Type=Application
 Name=Install font
 Comment=Add a font for your account
-Exec=/usr/local/bin/mas-fonts open %F
+Exec=/usr/local/bin/mas-launch /usr/local/bin/mas-fonts open %F
 Icon=mas-fonts
 Terminal=false
 NoDisplay=true

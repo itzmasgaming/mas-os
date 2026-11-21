@@ -2,7 +2,7 @@
 Type=Application
 Name=Accounts (create or delete)
 Comment=Create a new account or delete an account
-Exec=/usr/local/bin/mas-accounts
+Exec=/usr/local/bin/mas-launch /usr/local/bin/mas-accounts
 Icon=system-users
 Terminal=false
 Categories=System;Settings;

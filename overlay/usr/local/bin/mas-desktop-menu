@@ -46,7 +46,7 @@ def desktop_dir():
 
 def launch(cmd):
     try:
-        subprocess.Popen(cmd, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.Popen((['/usr/local/bin/mas-launch'] if os.path.exists('/usr/local/bin/mas-launch') else []) + list(cmd), start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
@@ -329,11 +329,18 @@ class Daemon:
         return None
 
     def set_hidden(self, w, hidden):
-        """Make a popup invisible (compositor opacity 0) while we decide whether it is the one to replace; no flash."""
+        """Hide the stock popup while we decide whether to replace it: fully transparent AND moved off-screen,
+        so nothing shows even without a compositor. Un-hiding puts it back exactly where it was."""
         try:
             a = self.xd.intern_atom('_NET_WM_WINDOW_OPACITY')
-            if hidden: w.change_property(a, Xatom.CARDINAL, 32, [0])
-            else: w.delete_property(a)
+            if hidden:
+                g = w.get_geometry(); self.popup_pos = (g.x, g.y)
+                w.change_property(a, Xatom.CARDINAL, 32, [0])
+                w.configure(x=-6000, y=-6000)
+            else:
+                w.delete_property(a)
+                x, y = getattr(self, 'popup_pos', (None, None))
+                if x is not None: w.configure(x=x, y=y)
             self.xd.flush()
         except Exception:
             pass

@@ -2,7 +2,7 @@
 Type=Application
 Name=Sandbox
 Comment=Disposable virtual machine. Erased when closed.
-Exec=/usr/local/bin/mas-sandbox
+Exec=/usr/local/bin/mas-launch /usr/local/bin/mas-sandbox
 Icon=mas-sandbox
 Terminal=false
 Categories=System;Emulator;

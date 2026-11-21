@@ -7,6 +7,9 @@ gi.require_version('Gtk', '3.0'); gi.require_version('Gdk', '3.0')
 from gi.repository import Gtk, Gdk, Gio, GLib, Pango
 
 HOME = os.path.expanduser('~')
+PC = 'This PC'
+TRASH = os.path.expanduser('~/.local/share/Trash/files')
+TRASH_INFO = os.path.expanduser('~/.local/share/Trash/info')
 CSS = b"""
 .mas-ribbon button { padding: 6px 12px; min-height: 0; }
 .mas-ribbon-body { padding: 4px 8px; }
@@ -47,7 +50,8 @@ class Files(Gtk.Window):
         root.pack_start(self.build_ribbon(), False, False, 0)
         root.pack_start(self.build_nav(), False, False, 0)
         paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL); paned.set_position(220)
-        paned.pack1(self.build_side(), False, False); paned.pack2(self.build_list(), True, False)
+        self.stack = Gtk.Stack(); self.stack.add_named(self.build_list(), 'list'); self.stack.add_named(self.build_pc(), 'pc')
+        paned.pack1(self.build_side(), False, False); paned.pack2(self.stack, True, False)
         root.pack_start(paned, True, True, 0)
         self.status = Gtk.Label(xalign=0, margin=6); root.pack_start(self.status, False, False, 0)
         self.connect('destroy', Gtk.main_quit); self.connect('key-press-event', self.on_key)
@@ -57,7 +61,7 @@ class Files(Gtk.Window):
     def rb(self, label, icon, cb, tip=None):
         b = Gtk.Button(); b.set_relief(Gtk.ReliefStyle.NONE)
         v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
-        v.pack_start(Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.LARGE_TOOLBAR), False, False, 0); v.pack_start(Gtk.Label(label=label), False, False, 0)
+        im = Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.LARGE_TOOLBAR); im.set_pixel_size(30); v.pack_start(im, False, False, 0); v.pack_start(Gtk.Label(label=label), False, False, 0)
         b.add(v); b.connect('clicked', lambda _b: cb()); b.set_tooltip_text(tip or label); return b
 
     def build_ribbon(self):
@@ -67,26 +71,27 @@ class Files(Gtk.Window):
             for b in buttons: bar.pack_start(b, False, False, 0)
             for w in (extra or []): bar.pack_start(w, False, False, 8)
             nb.append_page(bar, Gtk.Label(label=title))
-        tab('File', [self.rb('New window', 'window-new-symbolic', lambda: subprocess.Popen([sys.argv[0], self.cwd])),
-                     self.rb('Open terminal', 'utilities-terminal-symbolic', lambda: subprocess.Popen(['xfce4-terminal', '--working-directory', self.cwd])),
-                     self.rb('Close', 'window-close-symbolic', self.destroy)])
-        tab('Home', [self.rb('Copy', 'edit-copy-symbolic', lambda: self.copy(False)), self.rb('Cut', 'edit-cut-symbolic', lambda: self.copy(True)),
-                     self.rb('Paste', 'edit-paste-symbolic', self.paste), self.rb('Delete', 'user-trash-symbolic', self.delete),
-                     self.rb('Rename', 'document-edit-symbolic', self.rename), self.rb('New folder', 'folder-new-symbolic', self.new_folder),
-                     self.rb('Select all', 'edit-select-all-symbolic', lambda: self.view.get_selection().select_all())])
-        tab('Share', [self.rb('Compress to ZIP', 'package-x-generic-symbolic', self.zip_sel),
-                      self.rb('Copy path', 'edit-copy-symbolic', self.copy_path),
-                      self.rb('Open with...', 'document-open-symbolic', self.open_with)])
+        tab('File', [self.rb('New window', 'mas-r-window', lambda: subprocess.Popen([sys.argv[0], self.cwd])),
+                     self.rb('Open terminal', 'mas-r-terminal', lambda: subprocess.Popen(['xfce4-terminal', '--working-directory', self.cwd])),
+                     self.rb('Close', 'mas-r-close', self.destroy)])
+        tab('Home', [self.rb('Copy', 'mas-r-copy', lambda: self.copy(False)), self.rb('Cut', 'mas-r-cut', lambda: self.copy(True)),
+                     self.rb('Paste', 'mas-r-paste', self.paste), self.rb('Delete', 'mas-r-delete', self.delete),
+                     self.rb('Rename', 'mas-r-rename', self.rename), self.rb('New folder', 'mas-r-newfolder', self.new_folder),
+                     self.rb('Select all', 'mas-r-selectall', lambda: self.view.get_selection().select_all()),
+                     self.rb('Restore', 'mas-r-restore', self.restore, 'Put a deleted item back (in the Trash)'), self.rb('Empty Trash', 'mas-r-empty', self.empty_trash)])
+        tab('Share', [self.rb('Compress to ZIP', 'mas-r-zip', self.zip_sel),
+                      self.rb('Copy path', 'mas-r-path', self.copy_path),
+                      self.rb('Open with...', 'mas-r-openwith', self.open_with)])
         chk = Gtk.CheckButton(label='Hidden items'); chk.connect('toggled', lambda c: self.set_hidden(c.get_active()))
-        tab('View', [self.rb('Refresh', 'view-refresh-symbolic', self.reload)], [chk])
+        tab('View', [self.rb('Refresh', 'mas-r-refresh', self.reload)], [chk])
         self.ribbon = nb; return nb
 
     def build_nav(self):
         bar = Gtk.Box(spacing=6, margin=6)
         self.b_back = Gtk.Button.new_from_icon_name('go-previous-symbolic', Gtk.IconSize.BUTTON); self.b_back.connect('clicked', lambda _b: self.go_back())
         self.b_fwd = Gtk.Button.new_from_icon_name('go-next-symbolic', Gtk.IconSize.BUTTON); self.b_fwd.connect('clicked', lambda _b: self.go_fwd())
-        up = Gtk.Button.new_from_icon_name('go-up-symbolic', Gtk.IconSize.BUTTON); up.connect('clicked', lambda _b: self.goto(os.path.dirname(self.cwd)))
-        self.path = Gtk.Entry(); self.path.connect('activate', lambda e: self.goto(os.path.expanduser(e.get_text())))
+        up = Gtk.Button.new_from_icon_name('go-up-symbolic', Gtk.IconSize.BUTTON); up.connect('clicked', lambda _b: self.goto(PC if self.cwd in ('/', PC) or self.cwd == os.path.dirname(HOME) else os.path.dirname(self.cwd)))
+        self.path = Gtk.Entry(); self.path.connect('activate', lambda e: self.goto(PC if e.get_text().strip().lower() in ('this pc', 'pc') else os.path.expanduser(e.get_text())))
         self.search = Gtk.SearchEntry(placeholder_text='Search this folder', width_request=240); self.search.connect('search-changed', self.on_filter)
         for w in (self.b_back, self.b_fwd, up): bar.pack_start(w, False, False, 0)
         bar.pack_start(self.path, True, True, 0); bar.pack_start(self.search, False, False, 0)
@@ -97,7 +102,7 @@ class Files(Gtk.Window):
         self.side = Gtk.TreeStore(str, str, str, str)  # label, icon, kind(path|cmd|head|mount), target
         self.tv = Gtk.TreeView(model=self.side); self.tv.set_headers_visible(False); self.tv.get_style_context().add_class('mas-fm-side')
         col = Gtk.TreeViewColumn(); ci = Gtk.CellRendererPixbuf(); ct = Gtk.CellRendererText()
-        col.pack_start(ci, False); col.pack_start(ct, True); col.add_attribute(ci, 'icon-name', 1); col.add_attribute(ct, 'text', 0); self.tv.append_column(col)
+        ci.set_property('stock-size', Gtk.IconSize.LARGE_TOOLBAR); col.pack_start(ci, False); col.pack_start(ct, True); col.add_attribute(ci, 'icon-name', 1); col.add_attribute(ct, 'text', 0); self.tv.append_column(col)
         self.fill_side()
         self.tv.connect('row-activated', self.on_side); self.tv.expand_all()
         sc = Gtk.ScrolledWindow(); sc.add(self.tv); sc.set_size_request(200, -1)
@@ -108,26 +113,26 @@ class Files(Gtk.Window):
 
     def fill_side(self):
         s = self.side; s.clear()
-        qa = s.append(None, ['Quick access', 'starred-symbolic', 'head', ''])
-        for nm, ic, d, fb in (('Desktop', 'user-desktop-symbolic', 'DESKTOP', 'Desktop'), ('Documents', 'folder-documents-symbolic', 'DOCUMENTS', 'Documents'),
-                              ('Downloads', 'folder-download-symbolic', 'DOWNLOAD', 'Downloads'), ('Music', 'folder-music-symbolic', 'MUSIC', 'Music'),
-                              ('Pictures', 'folder-pictures-symbolic', 'PICTURES', 'Pictures'), ('Videos', 'folder-videos-symbolic', 'VIDEOS', 'Videos')):
+        qa = s.append(None, ['Quick access', 'mas-f-star', 'head', ''])
+        for nm, ic, d, fb in (('Desktop', 'mas-f-desktop', 'DESKTOP', 'Desktop'), ('Documents', 'mas-f-documents', 'DOCUMENTS', 'Documents'),
+                              ('Downloads', 'mas-f-downloads', 'DOWNLOAD', 'Downloads'), ('Music', 'mas-f-music', 'MUSIC', 'Music'),
+                              ('Pictures', 'mas-f-pictures', 'PICTURES', 'Pictures'), ('Videos', 'mas-f-videos', 'VIDEOS', 'Videos')):
             p = xdg(d, fb)
             if p: s.append(qa, [nm, ic, 'path', p])
-        pc = s.append(None, ['This PC', 'computer-symbolic', 'head', ''])
-        s.append(pc, ['Home (%s)' % os.path.basename(HOME), 'user-home-symbolic', 'path', HOME])
-        du = shutil.disk_usage('/'); s.append(pc, ['Local Disk (/)  -  %s free' % human(du.free), 'drive-harddisk-symbolic', 'path', '/'])
+        pc = s.append(None, ['This PC', 'mas-f-pc', 'head', ''])
+        s.append(pc, ['Home (%s)' % os.path.basename(HOME), 'mas-f-home', 'path', HOME])
+        du = shutil.disk_usage('/'); s.append(pc, ['Local Disk (/)  -  %s free' % human(du.free), 'mas-f-drive', 'path', '/'])
         try:
             for m in self.mon.get_mounts():
                 r = m.get_root(); p = r.get_path()
-                if p and not m.is_shadowed(): s.append(pc, [m.get_name(), 'drive-removable-media-symbolic', 'path', p])
+                if p and not m.is_shadowed(): s.append(pc, [m.get_name(), 'mas-f-usb', 'path', p])
             for v in self.mon.get_volumes():
-                if v.get_mount() is None and v.can_mount(): s.append(pc, [v.get_name() + ' (click to open)', 'drive-harddisk-symbolic', 'mount', v.get_identifier('unix-device') or v.get_name()])
+                if v.get_mount() is None and v.can_mount(): s.append(pc, [v.get_name() + ' (click to open)', 'mas-f-drive', 'mount', v.get_identifier('unix-device') or v.get_name()])
         except Exception: pass
-        s.append(pc, ['Trash', 'user-trash-symbolic', 'path', os.path.expanduser('~/.local/share/Trash/files')])
-        s.append(None, ['Network', 'network-workgroup-symbolic', 'cmd', 'nm-connection-editor'])
-        lx = s.append(None, ['Linux', 'tux-symbolic' if Gtk.IconTheme.get_default().has_icon('tux-symbolic') else 'application-x-executable-symbolic', 'head', ''])
-        s.append(lx, ['Ubuntu', 'utilities-terminal-symbolic', 'cmd', 'mas-ubuntu'])
+        s.append(pc, ['Trash', 'mas-f-trash', 'path', os.path.expanduser('~/.local/share/Trash/files')])
+        s.append(None, ['Network', 'mas-f-network', 'cmd', 'nm-connection-editor'])
+        lx = s.append(None, ['Linux', 'mas-f-linux', 'head', ''])
+        s.append(lx, ['Ubuntu', 'mas-f-linux', 'cmd', 'mas-ubuntu'])
         try: self.tv.expand_all()
         except Exception: pass
 
@@ -140,18 +145,69 @@ class Files(Gtk.Window):
         elif kind == 'mount':
             for v in self.mon.get_volumes():
                 if (v.get_identifier('unix-device') or v.get_name()) == target: v.mount(Gio.MountMountFlags.NONE, None, None, lambda *_a: self.fill_side())
-        elif kind == 'head': tv.expand_row(path, False) if not tv.row_expanded(path) else tv.collapse_row(path)
+        elif kind == 'head':
+            if self.side[it][0] in ('This PC', 'Quick access'): self.goto(PC)
+            else: tv.expand_row(path, False) if not tv.row_expanded(path) else tv.collapse_row(path)
+
+
+    # ------------------------------------------------ "This PC" page (like Windows)
+    def build_pc(self):
+        self.pc_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6, margin=22)
+        sc = Gtk.ScrolledWindow(); sc.add(self.pc_box); return sc
+
+    def tile(self, icon, title, sub, cb, bar=None):
+        b = Gtk.Button(relief=Gtk.ReliefStyle.NONE); b.set_size_request(250, -1); b.set_halign(Gtk.Align.START); b.set_hexpand(False)
+        h = Gtk.Box(spacing=12)
+        img = Gtk.Image.new_from_icon_name(icon, Gtk.IconSize.DIALOG); img.set_pixel_size(52); h.pack_start(img, False, False, 0)
+        v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=3, valign=Gtk.Align.CENTER)
+        t = Gtk.Label(xalign=0); t.set_markup('<b>%s</b>' % GLib.markup_escape_text(title)); v.pack_start(t, False, False, 0)
+        if bar is not None:
+            lb = Gtk.LevelBar(min_value=0, max_value=1, value=bar); lb.set_size_request(150, 8); v.pack_start(lb, False, False, 0)
+        if sub:
+            l = Gtk.Label(label=sub, xalign=0); l.set_opacity(0.65); v.pack_start(l, False, False, 0)
+        h.pack_start(v, True, True, 0); b.add(h); b.connect('clicked', lambda _b: cb()); return b
+
+    def section(self, title, tiles):
+        h = Gtk.Label(xalign=0, margin_top=10, margin_bottom=4); h.set_markup('<b>%s</b>' % GLib.markup_escape_text(title)); h.get_style_context().add_class('mas-fm-head')
+        self.pc_box.pack_start(h, False, False, 0)
+        fb = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=6, min_children_per_line=1, column_spacing=4, row_spacing=4, homogeneous=False, valign=Gtk.Align.START)
+        for t in tiles: fb.add(t)
+        self.pc_box.pack_start(fb, False, False, 0)
+
+    def fill_pc(self):
+        for c in self.pc_box.get_children(): self.pc_box.remove(c)
+        folders = []
+        for nm, ic, d, fb in (('Desktop', 'mas-f-desktop', 'DESKTOP', 'Desktop'), ('Documents', 'mas-f-documents', 'DOCUMENTS', 'Documents'),
+                              ('Downloads', 'mas-f-downloads', 'DOWNLOAD', 'Downloads'), ('Music', 'mas-f-music', 'MUSIC', 'Music'),
+                              ('Pictures', 'mas-f-pictures', 'PICTURES', 'Pictures'), ('Videos', 'mas-f-videos', 'VIDEOS', 'Videos')):
+            p = xdg(d, fb)
+            if p: folders.append(self.tile(ic, nm, '', lambda p=p: self.goto(p)))
+        folders.insert(0, self.tile('mas-f-home', os.path.basename(HOME) or 'Home', 'Your personal folder', lambda: self.goto(HOME)))
+        self.section('Folders (%d)' % len(folders), folders)
+        drives = []
+        du = shutil.disk_usage('/')
+        drives.append(self.tile('mas-f-drive', 'Local Disk (/)', '%s free of %s' % (human(du.free), human(du.total)), lambda: self.goto('/'), du.used / max(1, du.total)))
+        try:
+            for m in self.mon.get_mounts():
+                p = m.get_root().get_path()
+                if p and not m.is_shadowed() and p != '/':
+                    u = shutil.disk_usage(p); drives.append(self.tile('mas-f-usb', m.get_name(), '%s free of %s' % (human(u.free), human(u.total)), lambda p=p: self.goto(p), u.used / max(1, u.total)))
+        except Exception: pass
+        self.section('Devices and drives (%d)' % len(drives), drives)
+        self.section('Other', [self.tile('mas-f-trash', 'Trash', 'Deleted files', lambda: self.goto(TRASH)),
+                               self.tile('mas-f-linux', 'Ubuntu', 'Linux terminal (apt)', lambda: subprocess.Popen(['mas-ubuntu'], start_new_session=True) if shutil.which('mas-ubuntu') else None)])
+        self.pc_box.show_all()
 
     # ------------------------------------------------ list
     def build_list(self):
         # name, date text, type, size text, size num, mtime num, is_dir, path, icon
-        self.ls = Gtk.ListStore(str, str, str, str, GLib.Variant if False else float, float, bool, str, Gio.Icon)
+        self.ls = Gtk.ListStore(str, str, str, str, GLib.Variant if False else float, float, bool, str, str)
         self.fl = self.ls.filter_new(); self.fl.set_visible_func(self.visible)
         self.srt = Gtk.TreeModelSort(model=self.fl)
         self.view = Gtk.TreeView(model=self.srt); self.view.set_rubber_banding(True); self.view.get_selection().set_mode(Gtk.SelectionMode.MULTIPLE)
         self.view.set_search_column(0)
         c = Gtk.TreeViewColumn('Name'); ci = Gtk.CellRendererPixbuf(); self.name_r = Gtk.CellRendererText(ellipsize=Pango.EllipsizeMode.END); self.name_r.connect('edited', self.on_edited)
-        c.pack_start(ci, False); c.pack_start(self.name_r, True); c.add_attribute(ci, 'gicon', 8); c.add_attribute(self.name_r, 'text', 0)
+        c.pack_start(ci, False); c.pack_start(self.name_r, True); ci.set_property('stock-size', Gtk.IconSize.LARGE_TOOLBAR); c.add_attribute(ci, 'icon-name', 8); c.add_attribute(self.name_r, 'text', 0)
         c.set_resizable(True); c.set_expand(True); c.set_min_width(260); c.set_sort_column_id(0); self.view.append_column(c); self.name_col = c
         for title, idx, sortid, w in (('Date modified', 1, 5, 170), ('Type', 2, 2, 150), ('Size', 3, 4, 90)):
             r = Gtk.CellRendererText(xalign=1.0 if idx == 3 else 0.0)
@@ -173,10 +229,15 @@ class Files(Gtk.Window):
         self.filter = e.get_text().strip().lower(); self.fl.refilter(); self.update_status()
 
     def goto(self, path, push=True):
-        path = os.path.abspath(path)
+        if path != PC: path = os.path.abspath(path)
+        if path == PC:
+            if push and self.cwd and path != self.cwd: self.back.append(self.cwd); self.fwd = []
+            self.cwd = PC; self.path.set_text(PC); self.set_title(PC); self.search.set_text(''); self.reload()
+            self.b_back.set_sensitive(bool(self.back)); self.b_fwd.set_sensitive(bool(self.fwd)); return
+        if path == TRASH: os.makedirs(TRASH, exist_ok=True); os.makedirs(TRASH_INFO, exist_ok=True)
         if not os.path.isdir(path): self.status.set_text('Cannot open "%s".' % path); return
         if push and self.cwd and path != self.cwd: self.back.append(self.cwd); self.fwd = []
-        self.cwd = path; self.path.set_text(path); self.set_title(os.path.basename(path) or '/'); self.search.set_text(''); self.reload()
+        self.cwd = path; self.path.set_text(path); self.set_title('Trash' if path == TRASH else (os.path.basename(path) or '/')); self.search.set_text(''); self.reload()
         self.b_back.set_sensitive(bool(self.back)); self.b_fwd.set_sensitive(bool(self.fwd))
 
     def go_back(self):
@@ -189,6 +250,9 @@ class Files(Gtk.Window):
         self.hidden = v; self.reload()
 
     def reload(self):
+        if self.cwd == PC:
+            self.stack.set_visible_child_name('pc'); self.fill_pc(); self.status.set_text(''); return
+        self.stack.set_visible_child_name('list')
         self.ls.clear()
         try: names = os.listdir(self.cwd)
         except Exception as e:
@@ -203,9 +267,32 @@ class Files(Gtk.Window):
                 mt = info.get_attribute_uint64('time::modified'); size = info.get_size()
                 ty = 'File folder' if isdir else Gio.content_type_get_description(info.get_content_type() or '') or 'File'
                 if not isdir and n.lower().endswith('.exe'): ty = 'Windows application'
-                self.ls.append([n, time.strftime('%d/%m/%Y %I:%M %p', time.localtime(mt)) if mt else '', ty, '' if isdir else human(size), float(size), float(mt), isdir, p, info.get_icon()])
+                self.ls.append([n, time.strftime('%d/%m/%Y %I:%M %p', time.localtime(mt)) if mt else '', ty, '' if isdir else human(size), float(size), float(mt), isdir, p, self.icon_for(p, n, isdir, info.get_content_type() or '')])
             except Exception: continue
         self.update_status()
+
+
+    SPECIAL = {'Desktop': 'desktop', 'Documents': 'documents', 'Downloads': 'downloads', 'Music': 'music', 'Pictures': 'pictures', 'Videos': 'videos'}
+
+    def icon_for(self, p, name, isdir, ctype):
+        if isdir:
+            if os.path.dirname(p) == HOME and name in self.SPECIAL: return 'mas-f-' + self.SPECIAL[name]
+            return 'mas-f-folder'
+        n = name.lower(); c = ctype
+        if n.endswith(('.exe', '.msi', '.bat', '.com')) or 'msdownload' in c or 'ms-dos' in c or 'portable-executable' in c: return 'mas-t-exe'
+        if n.endswith(('.iso', '.img')) or 'iso9660' in c or 'cd-image' in c: return 'mas-t-disk'
+        if c.startswith('image/'): return 'mas-t-image'
+        if c.startswith('video/'): return 'mas-t-video'
+        if c.startswith('audio/'): return 'mas-t-audio'
+        if c == 'application/pdf': return 'mas-t-pdf'
+        if any(x in c for x in ('zip', 'tar', 'rar', 'gzip', '7z', 'xz', 'bzip', 'compressed')): return 'mas-t-archive'
+        if 'wordprocessing' in c or 'msword' in c or 'opendocument.text' in c or n.endswith(('.doc', '.docx', '.odt')): return 'mas-t-doc'
+        if 'spreadsheet' in c or 'ms-excel' in c: return 'mas-t-sheet'
+        if 'presentation' in c or 'powerpoint' in c: return 'mas-t-slides'
+        if 'font' in c: return 'mas-t-font'
+        if c.startswith('text/x-') or 'shellscript' in c or 'javascript' in c or 'json' in c or 'xml' in c or 'python' in c or n.endswith(('.py', '.js', '.c', '.h', '.cpp', '.rs', '.go', '.sh', '.html', '.css', '.json')): return 'mas-t-code'
+        if c.startswith('text/'): return 'mas-t-text'
+        return 'mas-t-file'
 
     def update_status(self):
         n = len(self.srt); sel = self.view.get_selection().count_selected_rows()
@@ -219,7 +306,9 @@ class Files(Gtk.Window):
         p = self.srt[path][7]
         if self.srt[path][6]: self.goto(p)
         else:
-            try: Gio.AppInfo.launch_default_for_uri(Gio.File.new_for_path(p).get_uri(), None)
+            try:
+                if os.path.exists('/usr/local/bin/mas-busy'): subprocess.Popen(['/usr/local/bin/mas-busy'])
+                Gio.AppInfo.launch_default_for_uri(Gio.File.new_for_path(p).get_uri(), None)
             except Exception as e: self.status.set_text('No program to open this: %s' % e)
 
     def open_with(self):
@@ -253,7 +342,53 @@ class Files(Gtk.Window):
         if cut: self.clip = ([], False)
         self.reload()
 
+    def in_trash(self):
+        return self.cwd == TRASH or self.cwd.startswith(TRASH + '/')
+
+    def restore(self):
+        from urllib.parse import unquote as uq
+        n = 0
+        for p in self.sel_paths():
+            info = os.path.join(TRASH_INFO, os.path.basename(p) + '.trashinfo'); dest = None
+            try:
+                for l in open(info).read().splitlines():
+                    if l.startswith('Path='): dest = uq(l[5:])
+            except Exception: pass
+            if not dest: self.status.set_text('Do not know where "%s" came from.' % os.path.basename(p)); continue
+            try:
+                os.makedirs(os.path.dirname(dest), exist_ok=True); shutil.move(p, uniq(dest)); n += 1
+                try: os.remove(info)
+                except Exception: pass
+            except Exception as e: self.status.set_text('Could not restore: %s' % e)
+        self.reload()
+        if n: self.status.set_text('%d item%s restored.' % (n, '' if n == 1 else 's'))
+
+    def empty_trash(self):
+        d = Gtk.MessageDialog(parent=self, message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO, text='Empty the Trash? Everything in it is gone for good.')
+        ok = d.run() == Gtk.ResponseType.YES; d.destroy()
+        if not ok: return
+        for base in (TRASH, TRASH_INFO):
+            try:
+                for n in os.listdir(base):
+                    q = os.path.join(base, n)
+                    shutil.rmtree(q) if os.path.isdir(q) and not os.path.islink(q) else os.remove(q)
+            except Exception as e: self.status.set_text('Could not empty the Trash: %s' % e)
+        self.reload()
+
     def delete(self):
+        if self.in_trash():
+            ps = self.sel_paths()
+            if not ps: return
+            d = Gtk.MessageDialog(parent=self, message_type=Gtk.MessageType.QUESTION, buttons=Gtk.ButtonsType.YES_NO, text='Delete %d item%s for good?' % (len(ps), '' if len(ps) == 1 else 's'))
+            ok = d.run() == Gtk.ResponseType.YES; d.destroy()
+            if ok:
+                for p in ps:
+                    try:
+                        shutil.rmtree(p) if os.path.isdir(p) and not os.path.islink(p) else os.remove(p)
+                        try: os.remove(os.path.join(TRASH_INFO, os.path.basename(p) + '.trashinfo'))
+                        except Exception: pass
+                    except Exception as e: self.status.set_text('Could not delete: %s' % e)
+            self.reload(); return
         for p in self.sel_paths():
             try: Gio.File.new_for_path(p).trash(None)
             except Exception:
@@ -309,6 +444,10 @@ class Files(Gtk.Window):
             m = Gtk.Menu()
             def add(t, cb):
                 i = Gtk.MenuItem.new_with_label(t); i.connect('activate', lambda _i: cb()); m.append(i)
+            if self.in_trash():
+                if hit: add('Restore', self.restore); add('Delete for good', self.delete)
+                add('Empty Trash', self.empty_trash)
+                m.show_all(); m.popup_at_pointer(ev); return True
             if hit:
                 add('Open', lambda: self.open_row(hit[0])); add('Open with...', self.open_with); m.append(Gtk.SeparatorMenuItem())
                 add('Cut', lambda: self.copy(True)); add('Copy', lambda: self.copy(False))
@@ -344,7 +483,7 @@ def start_path():
         a = os.path.expanduser(a)
         if os.path.isdir(a): return a
         if os.path.isfile(a): return os.path.dirname(a)
-    return HOME
+    return PC
 
 
 if __name__ == '__main__':

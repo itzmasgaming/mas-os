@@ -2,7 +2,7 @@
 Type=Application
 Name=Task Manager
 Comment=See and end running programs, CPU / memory / disk / network
-Exec=/usr/local/bin/mas-taskmgr
+Exec=/usr/local/bin/mas-launch /usr/local/bin/mas-taskmgr
 Icon=mas-taskmgr
 Terminal=false
 Categories=System;Monitor;

@@ -91,7 +91,7 @@ CATS = [
    P('Background', 'Pick a wallpaper or your own picture', 'personalize'),
    P('Fonts', 'Add your own fonts', 'fonts'),
    R('Taskbar', 'Buttons, clock and panel options', ['xfce4-panel', '--preferences']),
-   T('xfdesktop', '/desktop-icons/style', 'Show desktop icons', 'Icons for files and launchers on the desktop', on=2, off=0, typ='int'),
+   T('xfce4-desktop', '/desktop-icons/style', 'Show desktop icons', 'Icons for files and launchers on the desktop', on=2, off=0, typ='int'),
    T('xfwm4', '/general/use_compositing', 'Window effects', 'Shadows and smooth transparency (turn off on slow machines)'),
    T('xsettings', '/Gtk/EnableAnimations', 'Animations', 'Animate menus and buttons'),
    R('Appearance (advanced)', 'GTK theme, icons, cursor', ['xfce4-appearance-settings'])]),
@@ -143,7 +143,7 @@ CATS = [
  ('update', 'Update & Security', 'MAS update, recovery, backup', 'software-update-available-symbolic', [
    P('MAS Update', 'Check now, see what is new, install', 'update'),
    R('Restore points', 'Go back to an earlier state of the system', ['mas-restore']),
-   R('Recovery key', 'Make a new recovery key for your password', TERM + ['bash', '-c', 'sudo mas-recovery new; echo; read -n1 -p "Press a key..."']),
+   R('Recovery key', 'Make a new recovery key for your password', TERM + ['bash', '-c', 'sudo mas-recovery new --user "$USER"; echo; read -n1 -p "Press a key..."']),
    R('For developers: terminal', 'Open a terminal', ['xfce4-terminal'])]),
 ]
 PAGE_TITLES = {'personalize': 'Personalization', 'fonts': 'Fonts', 'update': 'MAS Update', 'about': 'About'}
@@ -165,7 +165,7 @@ def xq(ch, prop, *args):
 def start(cmd):
     import shutil
     if shutil.which(cmd[0]) is None: return False
-    subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    subprocess.Popen((['/usr/local/bin/mas-launch'] if os.path.exists('/usr/local/bin/mas-launch') else []) + list(cmd), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     return True
 
 
@@ -442,35 +442,46 @@ class Settings(Gtk.Window):
             self.history = []; self.open('search')
 
     def make_row(self, it, suffix=None):
-        card = Gtk.Box(spacing=12); card.get_style_context().add_class('mas-card')
+        """One setting. Click anywhere on the row: it opens (or switches). No Open button."""
+        ev = Gtk.EventBox(); ev.set_above_child(False)
+        card = Gtk.Box(spacing=12); card.get_style_context().add_class('mas-card'); ev.add(card)
         v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
         t = label(it['title']); t.set_markup('<b>%s</b>' % GLib.markup_escape_text(it['title']) + ('  <small>· %s</small>' % GLib.markup_escape_text(suffix) if suffix else ''))
-        v.pack_start(t, False, False, 0); v.pack_start(label(it['desc'], 'mas-sub', wrap=True), False, False, 0)
+        desc = label(it['desc'], 'mas-sub', wrap=True)
+        v.pack_start(t, False, False, 0); v.pack_start(desc, False, False, 0)
         card.pack_start(v, True, True, 0)
         k = it['kind']
+        ev.add_events(Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.ENTER_NOTIFY_MASK | Gdk.EventMask.LEAVE_NOTIFY_MASK)
+        def hover(on):
+            fl = card.get_state_flags()
+            card.set_state_flags(fl | Gtk.StateFlags.PRELIGHT, False) if on else card.unset_state_flags(Gtk.StateFlags.PRELIGHT)
+        ev.connect('enter-notify-event', lambda *_a: hover(True)); ev.connect('leave-notify-event', lambda *_a: hover(False))
         if k in ('run', 'page', 'action'):
-            b = Gtk.Button(label=it.get('button', 'Open')); b.set_valign(Gtk.Align.CENTER)
-            b.connect('clicked', lambda _b, i=it: self.do(i, _b)); card.pack_start(b, False, False, 0)
+            arrow = Gtk.Label(label='›' if k != 'action' else (it.get('button', 'Run'))); arrow.get_style_context().add_class('mas-big' if k != 'action' else 'mas-sub')
+            card.pack_start(arrow, False, False, 6)
+            ev.connect('button-press-event', lambda _w, e, i=it, d=desc: (self.do(i, d), True)[1] if e.button == 1 else False)
         elif k in ('toggle', 'cmdtoggle'):
             sw = Gtk.Switch(valign=Gtk.Align.CENTER); card.pack_start(sw, False, False, 0)
             self.load_toggle(it, sw)
+            ev.connect('button-press-event', lambda _w, e, s=sw: (s.set_active(not s.get_active()), True)[1] if e.button == 1 else False)
         elif k in ('choice', 'cmdchoice'):
             cb = Gtk.ComboBoxText(valign=Gtk.Align.CENTER)
             for lab, _v in it['opts']: cb.append_text(lab)
             card.pack_start(cb, False, False, 0); self.load_choice(it, cb)
-        return card
+        return ev
 
-    def do(self, it, btn):
+    def do(self, it, desc):
         k = it['kind']
         if k == 'page': self.open(it['page'])
         elif k == 'run':
-            if it['title'].startswith('Android'): return self.toast(btn, 'Not available yet')
-            if not start(it['cmd']): self.toast(btn, 'Not installed on this system')
+            if it['title'].startswith('Android'): return self.note(desc, 'Not available yet')
+            if start(it['cmd']): self.note(desc, 'Opening...')
+            else: self.note(desc, 'Not installed on this system')
         elif k == 'action':
-            sh(*it['cmd']); self.toast(btn, 'Done')
+            sh(*it['cmd']); self.note(desc, 'Done')
 
-    def toast(self, btn, text):
-        old = btn.get_label(); btn.set_label(text); GLib.timeout_add(1800, lambda: (btn.set_label(old), False)[1])
+    def note(self, lab, text):
+        old = lab.get_text(); lab.set_text(text); GLib.timeout_add(1800, lambda: (lab.set_text(old), False)[1])
 
     def load_toggle(self, it, sw):
         def work():
@@ -731,7 +742,7 @@ class Settings(Gtk.Window):
         cp = Gtk.Button(label='Copy to clipboard'); cp.set_valign(Gtk.Align.CENTER)
         def copy(_b):
             txt = '\n'.join('%s: %s' % (k, val) for sect in info['_sections'] for k, val in sect[1])
-            Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(txt, -1); self.toast(cp, 'Copied')
+            Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(txt, -1); cp.set_label('Copied'); GLib.timeout_add(1800, lambda: (cp.set_label('Copy to clipboard'), False)[1])
         cp.connect('clicked', copy); top.pack_end(cp, False, False, 0)
         box.pack_start(top, False, False, 0)
         for title, rows in info['_sections']:

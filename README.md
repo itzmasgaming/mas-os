@@ -117,3 +117,15 @@ New VM: Linux / Arch Linux (64-bit), 4 GB RAM or more, 2 CPUs, **40 GB disk**, *
 - Right-click on the desktop / taskbar: the stock menu is hidden the instant it appears (no flash), then replaced.
 - **Update popup**: "Update is here" with *Update Now* (closes all programs, installs, restarts) and *Update Later* (asks again after 2 hours).
 - **Key lights**: at start-up Num Lock, Caps Lock and Scroll Lock (keyboards have no Win light) switch on and off one after another (`mas-keyblink`).
+
+## v0.3.6
+- **Busy pointer**: starting a program shows the spinning pointer until its window appears (`mas-busy`), and a second click on the same thing within 3 seconds is ignored (`mas-launch`). Used by the Start menu, desktop icons, taskbar buttons, Files and Settings.
+- **Files**: opens on a "This PC" page like Windows (Folders with big coloured icons, Devices and drives with free-space bars); coloured icons in the sidebar.
+- **Right-click on the desktop** hides the stock menu even without window effects (moved off-screen as well as made transparent).
+
+## v0.3.7
+- **Settings**: no "Open" buttons any more - click anywhere on a row and it opens (or switches, for on/off rows). Rows show a small note ("Opening...", "Not installed on this system").
+- Fixed: "Show desktop icons" used the wrong xfconf channel; "Recovery key" now passes your user name; lock screen now has a locker (xfce4-screensaver).
+
+## v0.3.8
+- **Files**: Trash works (opens even when empty, Restore, Delete for good, Empty Trash); colourful icons - folders (Desktop/Documents/Downloads/Music/Pictures/Videos each with its own glyph), file types (images, video, audio, PDF, Word, Excel, slides, ZIP, programs, ISO, code, text, fonts) and ribbon buttons.

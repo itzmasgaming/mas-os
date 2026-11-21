@@ -2,7 +2,7 @@
 Type=Application
 Name=Files
 Comment=Browse your files and folders
-Exec=/usr/local/bin/mas-files %U
+Exec=/usr/local/bin/mas-launch /usr/local/bin/mas-files %U
 Icon=system-file-manager
 Terminal=false
 Categories=System;FileManager;Utility;
