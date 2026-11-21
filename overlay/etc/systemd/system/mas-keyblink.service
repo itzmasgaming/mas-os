@@ -1,0 +1,12 @@
+[Unit]
+Description=MAS: blink the keyboard lights at start-up
+After=systemd-udev-settle.service
+DefaultDependencies=no
+After=sysinit.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mas-keyblink
+
+[Install]
+WantedBy=multi-user.target

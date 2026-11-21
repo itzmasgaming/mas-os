@@ -110,3 +110,10 @@ New VM: Linux / Arch Linux (64-bit), 4 GB RAM or more, 2 CPUs, **40 GB disk**, *
 - **Settings** has a Windows-10-style home: profile + logo header, search box and 13 category tiles (System, Devices, Mobile devices, Network & Internet, Personalization, Apps, Accounts, Time & Language, Gaming, Ease of Access, Search, Privacy, Update & Security) with 70+ settings inside. Switches and drop-downs change the setting at once (xfconf / nmcli / timedatectl); "Open" rows start the matching tool.
 - Taskbar right-click no longer flashes the stock menu for a second: button positions are cached, so the stock popup is closed as soon as it appears and the MAS menu follows.
 - ISO: `optional.txt` gets blueman, system-config-printer, kdeconnect, orca (Settings rows say "Not installed" if missing).
+
+## v0.3.5
+- **Files** (`mas-files`): Windows-Explorer-style file manager - ribbon tabs (File / Home / Share / View), tree sidebar (Quick access, This PC, Network, Linux > Ubuntu), details list (Name, Date modified, Type, Size), search box, copy/cut/paste/delete(Trash)/rename/new folder/ZIP. It is now the default for folders.
+- **About** shows the whole PC: model, CPU, RAM, GPU, screens, disks, battery, network, BIOS/UEFI, kernel, Wine version; "Copy to clipboard".
+- Right-click on the desktop / taskbar: the stock menu is hidden the instant it appears (no flash), then replaced.
+- **Update popup**: "Update is here" with *Update Now* (closes all programs, installs, restarts) and *Update Later* (asks again after 2 hours).
+- **Key lights**: at start-up Num Lock, Caps Lock and Scroll Lock (keyboards have no Win light) switch on and off one after another (`mas-keyblink`).

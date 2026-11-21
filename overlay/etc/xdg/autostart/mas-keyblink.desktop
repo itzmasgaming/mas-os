@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=MAS key lights
+Comment=X fallback for keyboards that have no LED device in /sys (does nothing otherwise)
+Exec=/bin/sh -c 'ls /sys/class/leds/*::numlock >/dev/null 2>&1 || exec /usr/local/bin/mas-keyblink'
+NoDisplay=true
+OnlyShowIn=XFCE;

@@ -1,4 +1,5 @@
 [Default Applications]
+inode/directory=mas-files.desktop;
 # Windows programs open by double-click, like on Windows (mas-wine-open runs them with Wine)
 application/x-ms-dos-executable=mas-wine-open.desktop
 application/vnd.microsoft.portable-executable=mas-wine-open.desktop

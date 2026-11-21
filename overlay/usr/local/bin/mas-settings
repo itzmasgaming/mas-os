@@ -3,8 +3,8 @@
 import json, os, subprocess, sys, threading, time
 
 import gi
-gi.require_version('Gtk', '3.0'); gi.require_version('GdkPixbuf', '2.0')
-from gi.repository import Gtk, GLib, GdkPixbuf
+gi.require_version('Gtk', '3.0'); gi.require_version('Gdk', '3.0'); gi.require_version('GdkPixbuf', '2.0')
+from gi.repository import Gtk, Gdk, GLib, GdkPixbuf
 
 SHARE = os.environ.get('MAS_SHARE', '/usr/share/mas')
 APPEAR = os.environ.get('MAS_APPEARANCE', '/usr/local/bin/mas-appearance')
@@ -66,7 +66,7 @@ CATS = [
    T('xfwm4', '/general/snap_to_border', 'Snap windows to edges', 'Windows stick to screen edges and each other'),
    T('xfwm4', '/general/tile_on_move', 'Tile windows at screen edges', 'Drag a window to a side to fill half of the screen'),
    R('Task Manager', 'See and end running programs (Ctrl+Shift+Esc)', ['mas-taskmgr']),
-   R('Storage', 'Browse your drives and files', ['thunar', 'computer:///']),
+   R('Storage', 'Browse your drives and files', ['mas-files', '/']),
    P('About', 'MAS version and information', 'about')]),
  ('devices', 'Devices', 'Bluetooth, printers, mouse', 'input-keyboard-symbolic', [
    R('Mouse & touchpad', 'Speed, buttons, tap to click', ['xfce4-mouse-settings']),
@@ -131,8 +131,7 @@ CATS = [
    R('Screen reader', 'Orca reads the screen aloud', ['orca'])]),
  ('search', 'Search', 'Find my files, permissions', 'system-search-symbolic', [
    R('Search apps and files', 'Open the search window', ['mas-start', 'search']),
-   T('thunar', '/last-show-hidden', 'Show hidden files', 'In the Files app'),
-   T('thunar', '/misc-single-click', 'Open items with one click', 'Instead of double click in the Files app')]),
+   R('Files', 'Open the file manager (Ctrl+H shows hidden items there)', ['mas-files'])]),
  ('privacy', 'Privacy', 'Location, camera, microphone', 'system-lock-screen-symbolic', [
    R('Microphone', 'Which input is used', ['pavucontrol', '-t', '4']),
    dict(kind='action', title='Clear recent files', desc='Forget the list of recently opened files', button='Clear',
@@ -168,6 +167,139 @@ def start(cmd):
     if shutil.which(cmd[0]) is None: return False
     subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
     return True
+
+
+
+def _rd(p, d=''):
+    try:
+        with open(p) as f: return f.read().strip()
+    except Exception: return d
+
+
+def _gb(b):
+    return ('%.1f GB' % (b / 1e9)) if b >= 1e9 else ('%.0f MB' % (b / 1e6))
+
+
+def sysinfo():
+    """Everything about this computer, read from /proc, /sys and a few tools."""
+    import platform, shutil
+    rel = {}
+    for l in _rd('/etc/os-release').splitlines():
+        if '=' in l: k, v = l.split('=', 1); rel[k] = v.strip('"')
+    mas = {}
+    for l in _rd('/etc/mas-release').splitlines():
+        if '=' in l: k, v = l.split('=', 1); mas[k] = v.strip().strip('"')
+    cpu = {}
+    models = []
+    for l in _rd('/proc/cpuinfo').splitlines():
+        if ':' in l:
+            k, v = [x.strip() for x in l.split(':', 1)]
+            if k == 'model name': models.append(v)
+            cpu.setdefault(k, v)
+    cpu_name = (models[0] if models else platform.processor() or 'Unknown')
+    threads = os.cpu_count() or 1
+    cores = threads
+    rc, out = sh('lscpu')
+    ls = {}
+    for l in out.splitlines():
+        if ':' in l: k, v = l.split(':', 1); ls[k.strip()] = v.strip()
+    try: cores = int(ls.get('Core(s) per socket', 0)) * int(ls.get('Socket(s)', 1)) or threads
+    except Exception: pass
+    mhz = ''
+    try:
+        mx = float(ls.get('CPU max MHz') or cpu.get('cpu MHz') or 0)
+        if mx: mhz = '%.2f GHz' % (mx / 1000)
+    except Exception: pass
+    mem = {}
+    for l in _rd('/proc/meminfo').splitlines():
+        k, v = l.split(':', 1); mem[k] = int(v.split()[0]) * 1024
+    total, avail = mem.get('MemTotal', 0), mem.get('MemAvailable', 0)
+    swap = mem.get('SwapTotal', 0)
+    # RAM details (type, speed, slots) need root; try the plain route first
+    ram_extra = ''
+    rc, out = sh('sudo', '-n', 'dmidecode', '-t', 'memory', timeout=6)
+    if rc == 0:
+        sticks = []; cur = {}
+        for l in out.splitlines() + ['']:
+            l = l.strip()
+            if not l:
+                if cur.get('Size', 'No Module Installed').lower().startswith(('no module', 'unknown')) is False and cur.get('Size'):
+                    sticks.append('%s %s %s' % (cur.get('Size'), cur.get('Type', ''), cur.get('Speed', '')))
+                cur = {}
+            elif ':' in l: k, v = l.split(':', 1); cur[k.strip()] = v.strip()
+        if sticks: ram_extra = ', '.join(sticks)
+    gpus = []
+    rc, out = sh('lspci')
+    for l in out.splitlines():
+        if any(x in l for x in ('VGA', '3D controller', 'Display controller')):
+            gpus.append(l.split(': ', 1)[-1].strip())
+    # screens
+    screens = []
+    try:
+        d = Gdk.Display.get_default()
+        for i in range(d.get_n_monitors()):
+            m = d.get_monitor(i); g = m.get_geometry()
+            screens.append('%dx%d @%s%s' % (g.width * m.get_scale_factor(), g.height * m.get_scale_factor(),
+                           ('%.0f Hz' % (m.get_refresh_rate() / 1000)) if m.get_refresh_rate() else '?', ' (primary)' if m.is_primary() else ''))
+    except Exception: pass
+    # disks
+    disks = []
+    rc, out = sh('lsblk', '-dbno', 'NAME,SIZE,MODEL,TYPE,ROTA')
+    for l in out.splitlines():
+        p = l.split(None, 4)
+        if len(p) >= 4 and p[-2:-1] != ['loop'] and 'disk' in l.split():
+            try:
+                f = l.split(); name, size = f[0], int(f[1]); kind = 'SSD' if f[-1] == '0' else 'HDD'
+                model = ' '.join(f[2:-2]) or 'Disk'
+                if name.startswith(('zram', 'sr', 'loop', 'ram')) or size < 200e6: continue
+                disks.append('%s  %s  (%s, %s)' % (model, _gb(size), kind, name))
+            except Exception: pass
+    du = shutil.disk_usage('/')
+    dmi = '/sys/class/dmi/id/'
+    vendor, prod = _rd(dmi + 'sys_vendor'), _rd(dmi + 'product_name')
+    model = ('%s %s' % (vendor, prod)).strip() or 'Computer'
+    if prod in ('', 'System Product Name', 'To Be Filled By O.E.M.') and _rd(dmi + 'board_name'): model = '%s %s' % (_rd(dmi + 'board_vendor'), _rd(dmi + 'board_name'))
+    bat = ''
+    for p in ('BAT0', 'BAT1'):
+        b = '/sys/class/power_supply/' + p
+        if os.path.exists(b): bat = '%s%%  (%s)' % (_rd(b + '/capacity', '?'), _rd(b + '/status', '?')); break
+    up = float(_rd('/proc/uptime', '0 0').split()[0]); dd, rem = divmod(int(up), 86400); hh, rem = divmod(rem, 3600)
+    nm = []
+    rc, out = sh('nmcli', '-t', '-f', 'DEVICE,TYPE,STATE,CONNECTION', 'device')
+    for l in out.splitlines():
+        p = l.split(':')
+        if len(p) >= 3 and p[1] in ('wifi', 'ethernet') and p[2] == 'connected': nm.append('%s (%s)' % (p[3] if len(p) > 3 and p[3] else p[0], p[1]))
+    wine = sh('wine', '--version')[1].strip()
+    efi = 'UEFI' if os.path.exists('/sys/firmware/efi') else 'Legacy BIOS'
+    sections = [
+      ('DEVICE', [
+        ('Device name', platform.node()), ('Model', model),
+        ('Processor', '%s' % cpu_name), ('CPU cores / threads', '%d cores / %d threads%s' % (cores, threads, ('  ·  up to ' + mhz) if mhz else '')),
+        ('Installed RAM', '%s  (%s available now)' % (_gb(total), _gb(avail))),
+        ('RAM modules', ram_extra or 'Run "sudo dmidecode -t memory" for the exact modules'),
+        ('Swap', _gb(swap) if swap else 'None'),
+        ('Graphics', ('\n'.join(gpus)) or 'Unknown'),
+        ('Display', ('\n'.join(screens)) or 'Unknown'),
+        ('Storage', ('\n'.join(disks)) or 'Unknown'),
+        ('System drive', '%s used of %s  (%s free)' % (_gb(du.used), _gb(du.total), _gb(du.free))),
+        ('Battery', bat or 'None (desktop)'),
+        ('Network', ', '.join(nm) or 'Not connected'),
+        ('Up time', '%d days %d hours' % (dd, hh) if dd else '%d hours %d minutes' % (hh, rem // 60)),
+      ]),
+      ('FIRMWARE', [
+        ('BIOS / UEFI', '%s %s  (%s)' % (_rd(dmi + 'bios_vendor'), _rd(dmi + 'bios_version'), _rd(dmi + 'bios_date'))),
+        ('Boot mode', efi),
+        ('Motherboard', ('%s %s' % (_rd(dmi + 'board_vendor'), _rd(dmi + 'board_name'))).strip() or 'Unknown'),
+        ('Chassis', {'3': 'Desktop', '9': 'Laptop', '10': 'Notebook', '8': 'Portable', '14': 'Sub-notebook', '31': 'Convertible', '32': 'Detachable'}.get(_rd(dmi + 'chassis_type'), _rd(dmi + 'chassis_type') or 'Unknown')),
+      ]),
+      ('MAS', [
+        ('Edition', 'MAS OS'), ('Version', mas.get('VERSION', '?')),
+        ('Base', rel.get('PRETTY_NAME', 'Arch Linux')), ('Kernel', platform.release()), ('Architecture', platform.machine()),
+        ('Desktop', os.environ.get('XDG_CURRENT_DESKTOP', 'XFCE') + ' (' + ('Wayland' if os.environ.get('WAYLAND_DISPLAY') else 'X11') + ')'),
+        ('Windows programs', wine or 'Wine not installed'),
+      ]),
+    ]
+    return {'_host': platform.node() or 'MAS', '_model': model, '_sections': sections}
 
 
 class Settings(Gtk.Window):
@@ -588,17 +720,28 @@ class Settings(Gtk.Window):
 
     # ------------------------------------------------------------ About
     def page_about(self):
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8, margin=28)
-        img = Gtk.Image.new_from_icon_name('mas-start', Gtk.IconSize.DIALOG); img.set_pixel_size(96); img.set_halign(Gtk.Align.START)
-        box.pack_start(img, False, False, 0)
-        ver = '?'
-        try:
-            for l in open('/etc/mas-release'):
-                if l.startswith('VERSION='): ver = l.split('=', 1)[1].strip().strip('"')
-        except Exception: pass
-        box.pack_start(label('MAS OS', 'mas-title'), False, False, 0)
-        box.pack_start(label(f'Version {ver}'), False, False, 0)
-        box.pack_start(label('Built on Arch Linux. Runs Windows programs (.exe) with Wine.', 'mas-sub', wrap=True), False, False, 0)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14, margin=28)
+        top = Gtk.Box(spacing=18)
+        img = Gtk.Image.new_from_icon_name('mas-start', Gtk.IconSize.DIALOG); img.set_pixel_size(84)
+        v = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2, valign=Gtk.Align.CENTER)
+        info = sysinfo()
+        v.pack_start(label(info['_host'], 'mas-title'), False, False, 0)
+        v.pack_start(label(info['_model'], 'mas-sub'), False, False, 0)
+        top.pack_start(img, False, False, 0); top.pack_start(v, True, True, 0)
+        cp = Gtk.Button(label='Copy to clipboard'); cp.set_valign(Gtk.Align.CENTER)
+        def copy(_b):
+            txt = '\n'.join('%s: %s' % (k, val) for sect in info['_sections'] for k, val in sect[1])
+            Gtk.Clipboard.get(Gdk.SELECTION_CLIPBOARD).set_text(txt, -1); self.toast(cp, 'Copied')
+        cp.connect('clicked', copy); top.pack_end(cp, False, False, 0)
+        box.pack_start(top, False, False, 0)
+        for title, rows in info['_sections']:
+            box.pack_start(label(title, 'mas-section'), False, False, 6)
+            card = Gtk.Grid(column_spacing=24, row_spacing=7); card.get_style_context().add_class('mas-card')
+            for i, (k, val) in enumerate(rows):
+                kl = label(k, 'mas-sub'); kl.set_valign(Gtk.Align.START); kl.set_size_request(190, -1)
+                vl = label(val, wrap=True); vl.set_selectable(True); vl.set_hexpand(True); vl.set_max_width_chars(70)
+                card.attach(kl, 0, i, 1, 1); card.attach(vl, 1, i, 1, 1)
+            box.pack_start(card, False, False, 0)
         return box
 
 

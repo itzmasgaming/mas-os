@@ -1,6 +1,6 @@
 #!/usr/bin/python3
 """mas-update-notify - runs in the background after login and shows a small card when a MAS update is ready or installed."""
-import json, os, subprocess, sys, threading
+import json, os, subprocess, sys, threading, time
 import gi
 gi.require_version('Gtk', '3.0'); gi.require_version('Gdk', '3.0')
 from gi.repository import Gtk, Gdk, GLib
@@ -9,6 +9,9 @@ import cairo
 STATUS = os.environ.get('MAS_STATUS', '/var/lib/mas/update/status.json')
 FLAG = os.environ.get('MAS_REBOOT_FLAG', '/run/mas-reboot-needed')
 SEEN = os.path.expanduser('~/.config/mas/update-notified')
+SNOOZE = os.path.expanduser('~/.config/mas/update-snooze')
+LATER_SECONDS = int(os.environ.get('MAS_LATER_SECONDS', str(2 * 3600)))
+DRY = os.environ.get('MAS_DRY') == '1'
 INTERVAL = int(os.environ.get('MAS_NOTIFY_INTERVAL', '60'))
 UPDATE = '/usr/local/bin/mas-update'
 
@@ -78,24 +81,111 @@ class Toast(Gtk.Window):
         cr.close_path(); cr.fill(); self.shape_combine_region(Gdk.cairo_region_create_from_surface(s))
 
 
+
+def snoozed():
+    try: return time.time() < float(open(SNOOZE).read().strip())
+    except Exception: return False
+
+
+def snooze():
+    try:
+        os.makedirs(os.path.dirname(SNOOZE), exist_ok=True); open(SNOOZE, 'w').write(str(time.time() + LATER_SECONDS))
+    except Exception: pass
+
+
+def close_all_windows(skip_xid):
+    """Politely ask every open window to close (like clicking its X)."""
+    try:
+        from Xlib import display as xd, X, Xatom
+        from Xlib.protocol import event
+        d = xd.Display(); root = d.screen().root
+        p = root.get_full_property(d.intern_atom('_NET_CLIENT_LIST'), Xatom.WINDOW)
+        for wid in (p.value if p else []):
+            if wid == skip_xid: continue
+            ev = event.ClientMessage(window=d.create_resource_object('window', wid), client_type=d.intern_atom('_NET_CLOSE_WINDOW'), data=(32, [0, 2, 0, 0, 0]))
+            root.send_event(ev, event_mask=X.SubstructureRedirectMask | X.SubstructureNotifyMask)
+        d.flush(); d.close()
+    except Exception:
+        pass
+
+
+class UpdateDialog(Gtk.Window):
+    """'Update is here' - Update Now / Update Later (asks again in 2 hours)."""
+    def __init__(self, st, on_done):
+        super().__init__(type=Gtk.WindowType.TOPLEVEL)
+        self.on_done = on_done; self.working = False
+        self.set_title('MAS Update'); self.set_decorated(False); self.set_keep_above(True); self.set_resizable(False)
+        self.set_position(Gtk.WindowPosition.CENTER); self.set_skip_taskbar_hint(False); self.set_icon_name('mas-update')
+        css = Gtk.CssProvider(); css.load_from_data(b".mas-upd-title { font-size: 24px; font-weight: 800; } .mas-upd-box { border: 1px solid #5b86ff; border-radius: 18px; }")
+        Gtk.StyleContext.add_provider_for_screen(self.get_screen(), css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        outer = Gtk.Box(); outer.get_style_context().add_class('mas-upd-box'); self.add(outer)
+        self.box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14, margin=30); self.box.set_size_request(440, -1); outer.pack_start(self.box, True, True, 0)
+        ic = Gtk.Image.new_from_icon_name('mas-update', Gtk.IconSize.DIALOG); ic.set_pixel_size(64); self.box.pack_start(ic, False, False, 0)
+        latest = st.get('latest', '')
+        t = Gtk.Label(label='Update is here'); t.get_style_context().add_class('mas-upd-title'); self.box.pack_start(t, False, False, 0)
+        self.sub = Gtk.Label(label=('MAS %s is ready to install.' % latest) if latest else 'A new version of MAS is ready to install.')
+        self.box.pack_start(self.sub, False, False, 0)
+        notes = (st.get('notes') or '').strip()
+        if notes:
+            n = Gtk.Label(label=notes[:300]); n.set_line_wrap(True); n.set_max_width_chars(48); n.get_style_context().add_class('mas-sub'); self.box.pack_start(n, False, False, 0)
+        warn = Gtk.Label(label='Update Now closes all programs and restarts the computer. Save your work first.'); warn.set_line_wrap(True)
+        warn.set_max_width_chars(48); warn.get_style_context().add_class('mas-sub'); self.box.pack_start(warn, False, False, 0)
+        self.bar = Gtk.Box(spacing=10, halign=Gtk.Align.CENTER, margin_top=6)
+        now = Gtk.Button(label='Update Now'); now.get_style_context().add_class('suggested-action'); now.connect('clicked', lambda _b: self.update_now())
+        later = Gtk.Button(label='Update Later'); later.connect('clicked', lambda _b: self.later())
+        self.bar.pack_start(now, False, False, 0); self.bar.pack_start(later, False, False, 0); self.box.pack_start(self.bar, False, False, 0)
+        self.connect('key-press-event', lambda _w, e: self.later() if e.keyval == Gdk.KEY_Escape and not self.working else None)
+        self.show_all()
+
+    def later(self):
+        snooze(); self.destroy(); self.on_done()
+
+    def status_text(self, text):
+        self.sub.set_text(text); return False
+
+    def update_now(self):
+        self.working = True
+        self.box.remove(self.bar)
+        sp = Gtk.Spinner(); sp.start(); self.box.pack_start(sp, False, False, 0); self.box.show_all()
+        self.status_text('Closing programs...')
+        threading.Thread(target=self.run, daemon=True).start()
+
+    def run(self):
+        try: skip = self.get_window().get_xid()
+        except Exception: skip = 0
+        if not DRY: close_all_windows(skip)
+        time.sleep(3)
+        GLib.idle_add(self.status_text, 'Installing the update. Do not turn the computer off...')
+        rc = 0 if DRY else subprocess.run(['sudo', '-n', UPDATE, 'install']).returncode
+        if rc != 0:
+            GLib.idle_add(self.fail); return
+        GLib.idle_add(self.status_text, 'Done. Restarting...'); time.sleep(3)
+        if not DRY: subprocess.run(['systemctl', 'reboot'])
+
+    def fail(self):
+        self.working = False
+        self.status_text('The update could not be installed. Nothing was changed. It will be tried again later.')
+        snooze()
+        b = Gtk.Button(label='Close'); b.connect('clicked', lambda _b: (self.destroy(), self.on_done())); self.box.pack_start(b, False, False, 0); b.show()
+        return False
+
+
 class App:
     def __init__(self):
-        self.toast = None
+        self.toast = None; self.dialog = None
 
     def check(self):
-        if self.toast is not None and self.toast.get_visible(): return True
+        if (self.toast is not None and self.toast.get_visible()) or (self.dialog is not None and self.dialog.get_visible()): return True
         st = status(); state = st.get('state', ''); latest = st.get('latest', '')
         if st.get('reboot_needed'):
             key = f'installed:{latest}'; title = f'MAS updated to {latest}'; text = 'Restart to finish the update.'
             btns = [('Later', lambda: None, False), ('Restart now', lambda: subprocess.Popen(['systemctl', 'reboot']), True)]
+            if seen() == key: return True
+            remember(key)
+            self.toast = Toast(title, text, btns)
         elif state == 'available':
-            key = f'available:{latest}'; title = f'MAS {latest} is ready'; text = (st.get('notes') or 'A new version of MAS is ready to install.')[:140]
-            btns = [('Later', lambda: None, False), ('Install now', lambda: threading.Thread(target=lambda: subprocess.run(['sudo', '-n', UPDATE, 'install']), daemon=True).start(), True)]
-        else:
-            return True
-        if seen() == key: return True
-        remember(key)
-        self.toast = Toast(title, text, btns)
+            if snoozed(): return True
+            self.dialog = UpdateDialog(st, lambda: None)
         return True
 
 

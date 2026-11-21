@@ -1,0 +1,29 @@
+#!/bin/bash
+# mas-keyblink - at start-up the keyboard lights (Num Lock, Caps Lock, Scroll Lock) switch on and off one after another.
+# Keyboards have no "Win" light, so the third light is Scroll Lock. The lights go back to their real state afterwards.
+shopt -s nullglob
+declare -A SAVED
+LEDS=()
+for kind in numlock capslock scrolllock; do
+  for f in /sys/class/leds/*::$kind/brightness; do LEDS+=("$f"); SAVED[$f]=$(cat "$f" 2>/dev/null || echo 0); done
+done
+set_led() { echo "$2" > "$1" 2>/dev/null; }
+sel() { for f in "${LEDS[@]}"; do [[ $f == *::$1/brightness ]] && set_led "$f" "$2"; done; }
+if ((${#LEDS[@]})); then
+  for f in "${LEDS[@]}"; do set_led "$f" 0; done
+  for round in 1 2 3; do
+    for k in numlock capslock scrolllock; do sel $k 1; sleep 0.18; sel $k 0; done
+  done
+  for k in numlock capslock scrolllock; do sel $k 1; done; sleep 0.3
+  for f in "${LEDS[@]}"; do set_led "$f" "${SAVED[$f]}"; done
+  exit 0
+fi
+# no LED devices in /sys (some keyboards): use the X server instead, when a session exists
+if command -v xset >/dev/null 2>&1 && [[ -n $DISPLAY ]]; then
+  for round in 1 2 3; do
+    for n in 1 2 3; do xset led $n; sleep 0.18; xset -led $n; done
+  done
+  # give the lights back to the real lock state
+  if command -v xkbcomp >/dev/null 2>&1; then t=$(mktemp); xkbcomp -xkb "$DISPLAY" "$t" 2>/dev/null && xkbcomp "$t" "$DISPLAY" 2>/dev/null; rm -f "$t"; fi
+fi
+exit 0

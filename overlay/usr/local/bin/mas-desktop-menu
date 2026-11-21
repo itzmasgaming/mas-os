@@ -319,6 +319,25 @@ class Daemon:
             pass
         return False
 
+    def find_popup(self):
+        try:
+            for w in self.root.query_tree().children:
+                at = w.get_attributes()
+                if at.override_redirect and at.map_state == X.IsViewable: return w
+        except Exception:
+            pass
+        return None
+
+    def set_hidden(self, w, hidden):
+        """Make a popup invisible (compositor opacity 0) while we decide whether it is the one to replace; no flash."""
+        try:
+            a = self.xd.intern_atom('_NET_WM_WINDOW_OPACITY')
+            if hidden: w.change_property(a, Xatom.CARDINAL, 32, [0])
+            else: w.delete_property(a)
+            self.xd.flush()
+        except Exception:
+            pass
+
     def menu_items(self, appname):
         """Names of the menu entries a program (xfdesktop, xfce4-panel) is showing right now (through the accessibility bus)."""
         names = []
@@ -392,38 +411,33 @@ class Daemon:
         dbg('click', x, y, self.kind)
         if not self.kind: return False
         self.px, self.py = x, y
+        self.win = None
         if self.kind == 'panel':
             title = self.button_title_at(x, y)
-            win = self.window_by_title(title) if title else None
-            dbg('panel button', title, win)
-            if title and win is None: return False       # a launcher button: leave its own menu alone
-            self.win = win
-            self.waited = 0
-            GLib.timeout_add(10, self.replace_native)     # close the stock popup the moment it shows, then show ours
-            return False
-        GLib.timeout_add(150, self.maybe_show)
+            self.win = self.window_by_title(title) if title else None
+            dbg('panel button', title, self.win)
+            if title and self.win is None: return False       # a launcher button: leave its own menu alone
+        self.waited = 0
+        GLib.timeout_add(5, self.replace_native)             # hide the stock popup the moment it shows, then decide
         return False
 
     def replace_native(self):
-        if self.popup_showing():
-            self.press_escape(); GLib.timeout_add(40, self.show_ours)
-            return False
-        self.waited += 10
-        if self.waited > 500:
-            self.show_ours(); return False
-        return True
-
-    def maybe_show(self):
-        app, marks = ('xfdesktop', ('Create Launcher...', 'Desktop Settings...', 'Arrange Desktop Icons'))
-        if self.popup_showing():
-            names = self.menu_items(app)
-            dbg('popup showing;', app, 'items:', names[:6])
+        w = self.find_popup()
+        if w is None:
+            self.waited += 5
+            if self.waited > 500:
+                self.show_ours(); return False
+            return True
+        self.set_hidden(w, True)
+        if self.kind == 'desktop':
+            marks = ('Create Launcher...', 'Desktop Settings...', 'Arrange Desktop Icons')
+            names = self.menu_items('xfdesktop')
+            dbg('popup items:', names[:6])
             if not any(n in names for n in marks):
-                return False                      # the menu of an icon: leave it alone
-            self.press_escape()                   # close the plain menu, ours replaces it
-            GLib.timeout_add(120, self.show_ours)
-            return False
-        self.show_ours()
+                self.set_hidden(w, False)                     # the menu of an icon: show it again, untouched
+                return False
+        self.press_escape()
+        GLib.timeout_add(40, self.show_ours)
         return False
 
     def show_ours(self):

@@ -109,3 +109,6 @@ sudo
 # Small utilities
 xdg-utils
 git
+dmidecode
+pciutils
+xorg-xkbcomp

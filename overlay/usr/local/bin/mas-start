@@ -18,7 +18,7 @@ RUN_CARDS = [  # title, subtitle, icon, command (None = not available yet)
     ('Ubuntu LTS', 'apt and bash', 'mas-ubuntu', ['/usr/local/bin/mas-ubuntu']),
     ('Sandbox', 'Resets on close', 'mas-sandbox', ['/usr/local/bin/mas-sandbox']),
 ]
-PINNED = [('Brave', 'mas-brave', ['/usr/local/bin/mas-brave']), ('Files', 'mas-files', ['thunar']),
+PINNED = [('Brave', 'mas-brave', ['/usr/local/bin/mas-brave']), ('Files', 'mas-files', ['/usr/local/bin/mas-files']),
           ('Terminal', 'mas-terminal', ['xfce4-terminal']), ('Restore', 'mas-restore', ['/usr/local/bin/mas-restore']),
           ('Settings', 'mas-settings', ['/usr/local/bin/mas-settings'])]
 SETTINGS = [('Personalize', 'dark light mode wallpaper background theme colors', 'mas-personalize', ['/usr/local/bin/mas-settings', 'personalize']),

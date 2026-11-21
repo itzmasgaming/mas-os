@@ -143,6 +143,7 @@ ln -sf /etc/systemd/system/mas-live-boot.service      "$SYS/multi-user.target.wa
 # login screen safety net: falls back to the plain SDDM login if the MAS login theme is broken
 ln -sf /etc/systemd/system/mas-theme-check.service    "$SYS/multi-user.target.wants/mas-theme-check.service"
 ln -sf /etc/systemd/system/mas-theme-guard.service    "$SYS/multi-user.target.wants/mas-theme-guard.service"
+ln -sf /etc/systemd/system/mas-keyblink.service       "$SYS/multi-user.target.wants/mas-keyblink.service"
 
 if [[ $HAVE_PLYMOUTH -eq 1 ]]; then
   echo "==> Boot logo (Plymouth) instead of the [ OK ] text"

@@ -30,7 +30,11 @@ EXIST=(); for p in "${PATHS[@]}"; do [[ -e overlay/$p ]] && EXIST+=("$p"); done
 
 mkdir -p dist
 OUT="dist/mas-update-$VER.tar.gz"
-tar --owner=0 --group=0 --numeric-owner -C overlay -czf "$OUT" "${EXIST[@]}"
+EXTRA=()
+if [[ -f post-update.sh ]]; then
+  TMPX="$(mktemp -d)"; mkdir -p "$TMPX/.mas"; cp post-update.sh "$TMPX/.mas/post-update.sh"; chmod 755 "$TMPX/.mas/post-update.sh"; EXTRA=(-C "$TMPX" .mas/post-update.sh)
+fi
+tar --owner=0 --group=0 --numeric-owner -C overlay -czf "$OUT" "${EXIST[@]}" "${EXTRA[@]}"
 SHA="$(sha256sum "$OUT" | cut -d' ' -f1)"
 URL="https://github.com/$REPO/releases/download/v$VER/mas-update-$VER.tar.gz"
 python3 - "$VER" "$NOTES" "$URL" "$SHA" "$REBOOT" "$SYSUP" "${MAS_UPDATE_PACKAGES:-}" > dist/updates.mas <<'PY'
